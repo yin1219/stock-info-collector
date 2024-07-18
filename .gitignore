@@ -1,0 +1,8 @@
+dist/
+node_modules/
+Log/
+credentials.json
+token.json
+token_readonly.json
+stock-info-collector.zip
+stock-info-collector/

@@ -1,0 +1,8 @@
+{
+    "Debug":"false",
+    "HideConsole":"false",
+    "//":"log4js:trace, debug, info, warn ,error, fatal",
+    "LogLevel":"info",
+    "//":"股號以','區隔",
+    "StockNumbers":"2330,2455,3105,8086"
+}
