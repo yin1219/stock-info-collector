@@ -296,6 +296,21 @@ async function loadSavedCredentialsIfExist() {
     try {
       const content = await fs.readFile(TOKEN_PATH);
       const credentials = JSON.parse(content);
+
+      // 如果文件中包含 refresh_token，直接使用它創建 OAuth2Client
+      if (credentials.refresh_token) {
+        const oauth2Client = new google.auth.OAuth2(
+          credentials.client_id,
+          credentials.client_secret,
+          // YOUR_REDIRECT_URI
+        );
+        oauth2Client.setCredentials({
+          refresh_token: credentials.refresh_token
+        });
+        return oauth2Client;
+      }
+      
+      // 如果沒有 refresh_token，則使用之前的方法
       return google.auth.fromJSON(credentials);
     } catch (err) {
       console.log('[loadSavedCredentialsIfExist]' + err);
@@ -311,7 +326,8 @@ async function loadSavedCredentialsIfExist() {
    * @return {Promise<void>}
    */
   async function saveCredentials(client) 
-  {try {
+  {
+    try {
     const content = await fs.readFile(CREDENTIALS_PATH);
     const keys = JSON.parse(content);
     const key = keys.installed || keys.web;
@@ -336,16 +352,31 @@ async function loadSavedCredentialsIfExist() {
   async function authorize() {
     logger.debug(`[authorize]start`);   
     let client = await loadSavedCredentialsIfExist();
-    if (client) {
-      return client;
+    if (client) { 
+      try {
+        // 嘗試刷新 access token
+        await client.getAccessToken();
+        // 如果成功，保存新的憑證
+        await saveCredentials(client);
+      } catch (err) {
+        console.error('Error refreshing access token:', err);
+        logger.error('[authorize Error] Error refreshing access token: ' + err);
+        // 如果刷新失敗，將 client 設為 null，以便重新授權
+        client = null;
+      }
     }
-    client = await authenticate({
-      scopes: SCOPES,
-      keyfilePath: CREDENTIALS_PATH,
-    });
-    if (client.credentials) {
-      await saveCredentials(client);
+    
+    if (!client) {
+      // 如果無法使用 refresh token，則需要重新進行完整的授權流程
+      client = await authenticate({
+        scopes: SCOPES,
+        keyfilePath: CREDENTIALS_PATH,
+      });
+      if (client.credentials) {
+        await saveCredentials(client);
+      }
     }
+
     logger.debug(`[authorize]end`);   
     return client;
   }
@@ -400,9 +431,9 @@ async function loadSavedCredentialsIfExist() {
    * @param {CalendarEvent} event 
    */
   async function InsertEvents(event) {
+    try{
     let auth = await authorize();
     const calendar = google.calendar({version: 'v3', auth});
-    try{
       let response = await calendar.events.insert({
         auth: auth,
         calendarId: 'primary',
@@ -413,7 +444,7 @@ async function loadSavedCredentialsIfExist() {
       logger.info(`[InsertEvents Success]行事曆事件【${data.summary}】已建立!${data.htmlLink}`);
     }catch(err){
       console.error('There was an error contacting the Calendar service: ' + err);
-      logger.error('[InsertEvents Error]There was an error contacting the Calendar service: ' + err);
+      logger.error('[InsertEvents Error]There was an error contacting the Calendar service: ' + err);  
     }
   }
 
