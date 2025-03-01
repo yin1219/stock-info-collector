@@ -6,19 +6,11 @@ const path = require('path');
 const {authenticate} = require('@google-cloud/local-auth');
 const {google} = require('googleapis');
 const log4js = require("log4js");
-const ConsoleWindow = require("node-hide-console-window");
 
 //是否是在Debug
 const isDebug = config.get("Debug").toLowerCase() === "true";
-const isHideConsole = config.get("HideConsole").toLowerCase() === "true";
 
-if(isHideConsole){
-  //To hide your console just call:
-  ConsoleWindow.hideConsole();
-}else{  
-  //To show it again use:
-  ConsoleWindow.showConsole();
-}
+
 
 
 //公開資訊觀測站法說會查詢網址
@@ -163,7 +155,7 @@ async function getConferenceThenInsertEvent(){
 
         //需要再處理 目前=> 113/04/18時間：\n14 點 0 分 (24小時制)
         //把時間字串用正則取出，並轉換成ISO format: YYYY-MM-DDThh:mm:ss
-        let timeStr = conference.Time.replaceAll("\n","").replaceAll(" ","");
+        let timeStr = conference.Time?.replaceAll("\n","")?.replaceAll(" ","");
         let match =  dateTimePattern.exec(timeStr);
         let date = match.groups.ydm;
         let dateArr = date.split("/");
@@ -248,13 +240,35 @@ async function conferenceCrawler() {
     for(let stockNumber of stockNumbers){
         console.log(`In conferenceCrawler loop now stock is ${stockNumber}`)
         logger.debug(`[conferenceCrawler]In conferenceCrawler loop now stock is ${stockNumber}`);
-            
-        let res = await axios.post("https://mops.twse.com.tw/mops/web/ajax_t100sb07_1", 
-        `encodeURIComponent=1&step=1&firstin=1&off=1&keyword4=&code1=&TYPEK2=&checkbtn=&queryName=co_id&inpuType=co_id&TYPEK=all&co_id=${stockNumber}`);     
+
+        //20250301 公開觀測資訊站網站改版，需要先查詢後再用查到的Url 做爬蟲
+        var queryResponse = await fetch("https://mops.twse.com.tw/mops/api/redirectToOld", {
+          "headers": {
+            "accept": "*/*",
+            "accept-language": "zh-TW,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6",
+            "content-type": "application/json",
+            "sec-ch-ua": "\"Not(A:Brand\";v=\"99\", \"Microsoft Edge\";v=\"133\", \"Chromium\";v=\"133\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"Windows\"",
+            "sec-fetch-dest": "empty",
+            "sec-fetch-mode": "cors",
+            "sec-fetch-site": "same-origin",
+            "cookie": "_gid=GA1.3.780466755.1740832872; _ga_WS2SDNL5XZ=GS1.3.1740832871.1.0.1740832871.0.0.0; _ga=GA1.1.1553753193.1740832872; _ga_LTMT28749H=GS1.1.1740833053.1.1.1740833619.0.0.0"
+          },
+          "referrerPolicy": "no-referrer",
+          "body": "{\"apiName\":\"ajax_t100sb07_1\",\"parameters\":{\"co_id\":\"2330\",\"encodeURIComponent\":1,\"step\":1,\"firstin\":1,\"off\":1,\"TYPEK\":\"all\"}}",
+          "method": "POST"
+        });
+        
+        let result = await queryResponse.json();
+         
+        let conferenceUrl = result.result.url;
+
+        let res = await axios.get(conferenceUrl);
         let data = res.data,
 
         $ = cheerio.load(data);
-        let contentHtml = $("center").html().replace(/\s+/g, '');
+        let contentHtml = $("center").html()?.replace(/\s+/g, '');
         // console.log(`${stockNumber} contentHtml:`,contentHtml);
         let match =  pattern.exec(contentHtml);
         // console.log("mat:",match);
