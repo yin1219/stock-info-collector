@@ -256,7 +256,7 @@ async function conferenceCrawler() {
             "cookie": "_gid=GA1.3.780466755.1740832872; _ga_WS2SDNL5XZ=GS1.3.1740832871.1.0.1740832871.0.0.0; _ga=GA1.1.1553753193.1740832872; _ga_LTMT28749H=GS1.1.1740833053.1.1.1740833619.0.0.0"
           },
           "referrerPolicy": "no-referrer",
-          "body": "{\"apiName\":\"ajax_t100sb07_1\",\"parameters\":{\"co_id\":\"2330\",\"encodeURIComponent\":1,\"step\":1,\"firstin\":1,\"off\":1,\"TYPEK\":\"all\"}}",
+          "body": `{\"apiName\":\"ajax_t100sb07_1\",\"parameters\":{\"co_id\":\"${stockNumber}\",\"encodeURIComponent\":1,\"step\":1,\"firstin\":1,\"off\":1,\"TYPEK\":\"all\"}}`,
           "method": "POST"
         });
         
