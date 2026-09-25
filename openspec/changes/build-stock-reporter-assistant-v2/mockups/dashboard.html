@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>股市記者小幫手 v2｜介面原型</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #18211d;
+      --muted: #66746d;
+      --paper: #f5f2ea;
+      --panel: #fffdf8;
+      --line: #dedbd2;
+      --green: #17694b;
+      --green-soft: #dceee4;
+      --amber: #a45f0a;
+      --amber-soft: #fff0d5;
+      --red: #a53b32;
+      --red-soft: #fae4df;
+      --blue: #315f86;
+      --shadow: 0 12px 30px rgba(37, 44, 40, .08);
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--paper); color: var(--ink); font: 15px/1.55 "Segoe UI", "Noto Sans TC", sans-serif; }
+    button, input, select { font: inherit; }
+    button { cursor: pointer; }
+    .app { min-height: 100vh; display: grid; grid-template-columns: 248px minmax(0, 1fr); }
+    aside { background: #17382d; color: #f7fbf8; padding: 24px 18px; position: sticky; top: 0; height: 100vh; }
+    .brand { display: flex; gap: 12px; align-items: center; padding: 0 8px 24px; }
+    .logo { width: 40px; height: 40px; display: grid; place-items: center; background: #e4b75b; color: #17382d; border-radius: 12px; font-weight: 800; }
+    .brand strong { display: block; font-size: 17px; }
+    .brand small { color: #b8cec4; }
+    nav button { width: 100%; border: 0; background: transparent; color: #cfe0d8; text-align: left; border-radius: 10px; padding: 11px 12px; margin: 3px 0; }
+    nav button:hover, nav button.active { background: rgba(255,255,255,.1); color: white; }
+    .side-status { position: absolute; left: 18px; right: 18px; bottom: 22px; padding: 14px; background: rgba(255,255,255,.08); border-radius: 12px; }
+    .side-status b { color: #8de0b8; }
+    main { min-width: 0; padding: 28px clamp(20px, 4vw, 54px) 54px; }
+    header { display: flex; justify-content: space-between; gap: 20px; align-items: flex-start; margin-bottom: 26px; }
+    h1 { font-size: clamp(25px, 3vw, 36px); margin: 0 0 6px; letter-spacing: -.03em; }
+    h2 { font-size: 19px; margin: 0; }
+    p { margin: 0; }
+    .muted { color: var(--muted); }
+    .prototype { display: inline-flex; gap: 8px; align-items: center; color: var(--amber); background: var(--amber-soft); padding: 8px 12px; border-radius: 999px; font-size: 13px; }
+    .panel { display: none; }
+    .panel.active { display: block; }
+    .cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin-bottom: 18px; }
+    .card, .section { background: var(--panel); border: 1px solid var(--line); box-shadow: var(--shadow); border-radius: 16px; }
+    .card { padding: 18px; }
+    .card .value { font-size: 25px; font-weight: 750; margin: 8px 0 1px; }
+    .card small { color: var(--muted); }
+    .section { padding: 20px; margin-bottom: 16px; }
+    .section-head { display: flex; justify-content: space-between; gap: 12px; align-items: center; margin-bottom: 15px; }
+    .grid-2 { display: grid; grid-template-columns: 1.45fr 1fr; gap: 16px; }
+    .list { display: grid; gap: 10px; }
+    .row { display: grid; grid-template-columns: auto 1fr auto; gap: 13px; align-items: start; padding: 13px; border: 1px solid var(--line); border-radius: 12px; background: white; }
+    .dot { width: 10px; height: 10px; margin-top: 7px; border-radius: 50%; background: var(--green); }
+    .dot.amber { background: var(--amber); }
+    .dot.red { background: var(--red); }
+    .row-title { font-weight: 680; }
+    .row-meta { color: var(--muted); font-size: 13px; }
+    .badge { display: inline-block; border-radius: 999px; padding: 3px 8px; font-size: 12px; white-space: nowrap; background: #ebefec; color: #4d5b54; }
+    .badge.watch { background: var(--amber-soft); color: var(--amber); }
+    .badge.ok { background: var(--green-soft); color: var(--green); }
+    .badge.warn { background: var(--red-soft); color: var(--red); }
+    .btn { border: 1px solid var(--line); background: white; color: var(--ink); padding: 8px 12px; border-radius: 9px; }
+    .btn.primary { background: var(--green); border-color: var(--green); color: white; }
+    .toolbar { display: flex; flex-wrap: wrap; gap: 9px; margin-bottom: 14px; }
+    .toolbar input, .toolbar select, .field input, .field select { border: 1px solid #cfcfc6; background: white; padding: 9px 11px; border-radius: 9px; color: var(--ink); }
+    table { width: 100%; border-collapse: collapse; }
+    th { text-align: left; color: var(--muted); font-size: 12px; font-weight: 650; padding: 10px; border-bottom: 1px solid var(--line); }
+    td { padding: 12px 10px; border-bottom: 1px solid #e9e6df; vertical-align: top; }
+    tr:last-child td { border-bottom: 0; }
+    .company { font-weight: 700; white-space: nowrap; }
+    .setting { display: flex; justify-content: space-between; align-items: center; gap: 20px; padding: 15px 0; border-bottom: 1px solid var(--line); }
+    .setting:last-child { border-bottom: 0; }
+    .fields { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .switch { width: 46px; height: 26px; border: 0; border-radius: 30px; background: #b8bfbb; padding: 3px; }
+    .switch::after { content: ""; display: block; width: 20px; height: 20px; border-radius: 50%; background: white; transition: .2s; }
+    .switch.on { background: var(--green); }
+    .switch.on::after { transform: translateX(20px); }
+    .health { display: grid; grid-template-columns: 1fr auto; gap: 9px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--line); }
+    .health:last-child { border: 0; }
+    .toast { position: fixed; right: 22px; bottom: 22px; width: min(360px, calc(100vw - 44px)); background: #1e2b25; color: white; padding: 16px; border-radius: 14px; box-shadow: 0 18px 45px rgba(0,0,0,.26); transform: translateY(140%); opacity: 0; transition: .28s; z-index: 10; }
+    .toast.show { transform: translateY(0); opacity: 1; }
+    .toast strong { display: block; margin-bottom: 4px; }
+    .empty-note { color: var(--muted); text-align: center; padding: 30px; border: 1px dashed var(--line); border-radius: 12px; }
+    @media (max-width: 980px) { .cards { grid-template-columns: repeat(2, 1fr); } .grid-2 { grid-template-columns: 1fr; } }
+    @media (max-width: 720px) { .app { grid-template-columns: 1fr; } aside { position: static; height: auto; } nav { display: flex; overflow-x: auto; } nav button { min-width: max-content; } .side-status { position: static; margin-top: 16px; } main { padding: 22px 15px 40px; } header { flex-direction: column; } .cards { grid-template-columns: 1fr; } .table-wrap { overflow-x: auto; } }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside>
+      <div class="brand"><div class="logo">報</div><div><strong>股市記者小幫手</strong><small>Reporter Desk v2</small></div></div>
+      <nav aria-label="主要導覽">
+        <button class="active" data-panel="dashboard">總覽</button>
+        <button data-panel="watchlist">關注公司</button>
+        <button data-panel="material">重大訊息 <span class="badge watch">7</span></button>
+        <button data-panel="defaults">違約交割</button>
+        <button data-panel="conferences">法說會</button>
+        <button data-panel="settings">設定</button>
+      </nav>
+      <div class="side-status"><b>● 監控中</b><br><small>下次檢查 19:00<br>關閉視窗仍持續運作</small></div>
+    </aside>
+
+    <main>
+      <header>
+        <div><h1 id="page-title">今天的市場線索</h1><p class="muted" id="page-subtitle">2026 年 9 月 25 日・上次更新 18:32</p></div>
+        <span class="prototype">● 互動原型・資料皆為範例</span>
+      </header>
+
+      <section class="panel active" id="dashboard">
+        <div class="cards">
+          <div class="card"><small>今日新重大訊息</small><div class="value">7</div><span class="badge watch">3 家關注公司</span></div>
+          <div class="card"><small>今日違約揭露</small><div class="value">2</div><span class="badge ok">全市場已更新</span></div>
+          <div class="card"><small>近期法說會</small><div class="value">5</div><small>未來 14 天</small></div>
+          <div class="card"><small>資料來源</small><div class="value">4 / 5</div><span class="badge warn">1 個降級</span></div>
+        </div>
+        <div class="grid-2">
+          <div class="section">
+            <div class="section-head"><h2>剛收到的重大訊息</h2><button class="btn" data-go="material">查看全部</button></div>
+            <div class="list">
+              <div class="row"><span class="dot"></span><div><div class="row-title">2330 台積電｜公告取得機器設備</div><div class="row-meta">18:21・上市・財務業務</div></div><span class="badge watch">關注</span></div>
+              <div class="row"><span class="dot"></span><div><div class="row-title">2454 聯發科｜受邀參加法人說明會</div><div class="row-meta">17:54・上市・法說資訊</div></div><span class="badge watch">關注</span></div>
+              <div class="row"><span class="dot amber"></span><div><div class="row-title">2303 聯電｜補充董事會決議事項</div><div class="row-meta">17:38・上市・更正／補充</div></div><span class="badge watch">關注</span></div>
+            </div>
+          </div>
+          <div>
+            <div class="section">
+              <div class="section-head"><h2>監控排程</h2><button class="btn primary" id="run-now">立即檢查</button></div>
+              <div class="health"><span>重大訊息</span><span class="badge ok">18:00 成功</span></div>
+              <div class="health"><span>違約交割</span><span class="badge ok">18:31 成功</span></div>
+              <div class="health"><span>法說會同步</span><span class="badge warn">RSS 降級</span></div>
+            </div>
+            <div class="section"><div class="section-head"><h2>下一場法說會</h2><span class="badge ok">已加入行事曆</span></div><strong>2454 聯發科</strong><p>9/28（一）14:30<br><span class="muted">線上法人說明會</span></p></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel" id="watchlist">
+        <div class="section">
+          <div class="section-head"><div><h2>關注公司</h2><p class="muted">這份清單同時套用到重大訊息、違約交割標示與法說會。</p></div><button class="btn primary" id="add-company">＋ 新增公司</button></div>
+          <div class="toolbar"><input placeholder="搜尋代號或公司名稱"><select><option>全部市場</option><option>上市</option><option>上櫃</option></select><button class="btn">匯入 config/default.json</button></div>
+          <div class="table-wrap"><table><thead><tr><th>公司</th><th>市場</th><th>分類</th><th>狀態</th><th>備註</th></tr></thead><tbody>
+            <tr><td class="company">2330 台積電</td><td>上市</td><td>半導體</td><td><span class="badge ok">監控中</span></td><td>供應鏈主線</td></tr>
+            <tr><td class="company">2454 聯發科</td><td>上市</td><td>IC 設計</td><td><span class="badge ok">監控中</span></td><td>—</td></tr>
+            <tr><td class="company">6488 環球晶</td><td>上櫃</td><td>半導體</td><td><span class="badge">已停用</span></td><td>保留歷史紀錄</td></tr>
+          </tbody></table></div>
+        </div>
+      </section>
+
+      <section class="panel" id="material">
+        <div class="section">
+          <div class="section-head"><div><h2>重大訊息</h2><p class="muted">完整內容保留在本機；同次多筆只發一則彙總通知。</p></div><button class="btn">全部標為已讀</button></div>
+          <div class="toolbar"><input type="date" value="2026-09-25"><select><option>全部關注公司</option><option>2330 台積電</option><option>2454 聯發科</option></select><select><option>全部狀態</option><option>未讀</option><option>更正／補充</option></select></div>
+          <div class="list">
+            <div class="row"><span class="dot"></span><div><div class="row-title">2330 台積電｜公告取得機器設備</div><p>依公開資訊觀測站發布內容顯示，本次交易為生產用途設備……</p><div class="row-meta">18:21・MOPS 即時來源・首次發現 18:31</div></div><span class="badge watch">未讀</span></div>
+            <div class="row"><span class="dot amber"></span><div><div class="row-title">2303 聯電｜補充董事會決議事項</div><p>本則為先前公告之補充資訊，原始公告仍保留供比對。</p><div class="row-meta">17:38・MOPS 即時來源・關聯原公告 #A102</div></div><span class="badge warn">補充</span></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel" id="defaults">
+        <div class="section">
+          <div class="section-head"><div><h2>全市場違約交割揭露</h2><p class="muted">資料日 2026/09/25・上市與上櫃皆已更新</p></div><span class="badge ok">18:31 完成</span></div>
+          <div class="toolbar"><input type="date" value="2026-09-25"><select><option>上市＋上櫃</option><option>上市</option><option>上櫃</option></select><label><input type="checkbox"> 只看關注公司</label></div>
+          <div class="table-wrap"><table><thead><tr><th>公司</th><th>市場</th><th>券商</th><th>揭露金額</th><th>關注</th></tr></thead><tbody>
+            <tr><td class="company">2454 聯發科</td><td>上市</td><td>範例證券－台北</td><td>NT$ 1,280,000</td><td><span class="badge watch">關注</span></td></tr>
+            <tr><td class="company">6123 範例科技</td><td>上櫃</td><td>範例證券－新竹</td><td>NT$ 460,000</td><td>—</td></tr>
+          </tbody></table></div>
+        </div>
+      </section>
+
+      <section class="panel" id="conferences">
+        <div class="section">
+          <div class="section-head"><div><h2>法說會與 Google Calendar</h2><p class="muted">最近同步 18:10・Google Calendar 已連線</p></div><button class="btn primary">同步行事曆</button></div>
+          <div class="list">
+            <div class="row"><span class="dot"></span><div><div class="row-title">9/28 14:30｜2454 聯發科</div><div class="row-meta">線上法人說明會・來源已驗證</div></div><span class="badge ok">已同步</span></div>
+            <div class="row"><span class="dot"></span><div><div class="row-title">10/02 15:00｜2330 台積電</div><div class="row-meta">台北市信義路（範例）</div></div><span class="badge">待同步</span></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel" id="settings">
+        <div class="section">
+          <div class="section-head"><div><h2>監控設定</h2><p class="muted">儲存後由背景程式套用，不需重新啟動。</p></div><button class="btn primary" id="save-settings">儲存設定</button></div>
+          <div class="setting"><div><strong>重大訊息監控</strong><p class="muted">在指定時段定期檢查關注公司</p></div><button class="switch on" aria-label="切換重大訊息監控"></button></div>
+          <div class="setting"><div><strong>監控時段</strong><p class="muted">跨午夜時段也支援</p></div><div class="fields"><input type="time" value="00:00"><span>至</span><input type="time" value="23:59"></div></div>
+          <div class="setting"><div><strong>檢查頻率</strong><p class="muted">預設每 60 分鐘</p></div><select><option>每 15 分鐘</option><option>每 30 分鐘</option><option selected>每 60 分鐘</option><option>每 120 分鐘</option></select></div>
+          <div class="setting"><div><strong>違約交割檢查</strong><p class="muted">若資料未更新，19:00 自動再查一次</p></div><input type="time" value="18:30"></div>
+          <div class="setting"><div><strong>Windows 登入後啟動</strong><p class="muted">啟動後縮到系統匣</p></div><button class="switch on" aria-label="切換登入啟動"></button></div>
+          <div class="setting"><div><strong>Google Calendar</strong><p class="muted">已連線：reporter@example.com</p></div><button class="btn">管理連線</button></div>
+          <div class="setting"><div><strong>本機資料</strong><p class="muted">SQLite・最近備份：尚未建立</p></div><button class="btn">備份／匯出</button></div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div class="toast" role="status" aria-live="polite"><strong id="toast-title">檢查已開始</strong><span id="toast-body">完成後會以 Windows 通知告知結果。</span></div>
+  <script>
+    const titles = {
+      dashboard: ['今天的市場線索', '2026 年 9 月 25 日・上次更新 18:32'],
+      watchlist: ['關注公司', '管理要追蹤的股票與分類'],
+      material: ['重大訊息', '關注公司的最新公告與完整歷史'],
+      defaults: ['違約交割', '每日檢查上市櫃全市場並突出關注公司'],
+      conferences: ['法說會', '近期活動與 Google Calendar 同步'],
+      settings: ['設定', '調整排程、啟動方式與本機資料']
+    };
+    function openPanel(id) {
+      document.querySelectorAll('.panel').forEach(el => el.classList.toggle('active', el.id === id));
+      document.querySelectorAll('nav button').forEach(el => el.classList.toggle('active', el.dataset.panel === id));
+      document.querySelector('#page-title').textContent = titles[id][0];
+      document.querySelector('#page-subtitle').textContent = titles[id][1];
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+    document.querySelectorAll('[data-panel]').forEach(el => el.addEventListener('click', () => openPanel(el.dataset.panel)));
+    document.querySelectorAll('[data-go]').forEach(el => el.addEventListener('click', () => openPanel(el.dataset.go)));
+    document.querySelectorAll('.switch').forEach(el => el.addEventListener('click', () => el.classList.toggle('on')));
+    let toastTimer;
+    function toast(title, body) {
+      document.querySelector('#toast-title').textContent = title;
+      document.querySelector('#toast-body').textContent = body;
+      const el = document.querySelector('.toast');
+      el.classList.add('show');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => el.classList.remove('show'), 3200);
+    }
+    document.querySelector('#run-now').addEventListener('click', () => toast('正在檢查 3 項來源', '這是原型示範，不會真的連線或寫入資料。'));
+    document.querySelector('#save-settings').addEventListener('click', () => toast('設定已儲存', '重大訊息將全天每 60 分鐘檢查一次。'));
+    document.querySelector('#add-company').addEventListener('click', () => toast('新增公司', '正式版會在這裡驗證股票代號並帶入市場與名稱。'));
+  </script>
+</body>
+</html>
