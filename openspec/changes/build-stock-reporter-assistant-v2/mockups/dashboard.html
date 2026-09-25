@@ -54,6 +54,8 @@
     .grid-2 { display: grid; grid-template-columns: 1.45fr 1fr; gap: 16px; }
     .list { display: grid; gap: 10px; }
     .row { display: grid; grid-template-columns: auto 1fr auto; gap: 13px; align-items: start; padding: 13px; border: 1px solid var(--line); border-radius: 12px; background: white; }
+    .row.clickable { cursor: pointer; transition: border-color .15s, transform .15s, box-shadow .15s; }
+    .row.clickable:hover, .row.clickable:focus-visible { border-color: #80a492; box-shadow: 0 7px 18px rgba(23, 105, 75, .1); transform: translateY(-1px); outline: none; }
     .dot { width: 10px; height: 10px; margin-top: 7px; border-radius: 50%; background: var(--green); }
     .dot.amber { background: var(--amber); }
     .dot.red { background: var(--red); }
@@ -81,12 +83,31 @@
     .switch.on::after { transform: translateX(20px); }
     .health { display: grid; grid-template-columns: 1fr auto; gap: 9px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--line); }
     .health:last-child { border: 0; }
-    .toast { position: fixed; right: 22px; bottom: 22px; width: min(360px, calc(100vw - 44px)); background: #1e2b25; color: white; padding: 16px; border-radius: 14px; box-shadow: 0 18px 45px rgba(0,0,0,.26); transform: translateY(140%); opacity: 0; transition: .28s; z-index: 10; }
+    .notification-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+    .notification-sample { border: 1px solid var(--line); border-radius: 13px; background: white; padding: 14px; }
+    .notification-sample strong { display: block; margin: 5px 0; }
+    .notification-sample .btn { margin-top: 12px; }
+    .toast { position: fixed; right: 22px; bottom: 22px; width: min(380px, calc(100vw - 44px)); background: #1e2b25; color: white; padding: 16px; border-radius: 14px; box-shadow: 0 18px 45px rgba(0,0,0,.26); transform: translateY(140%); opacity: 0; transition: .28s; z-index: 20; cursor: pointer; }
     .toast.show { transform: translateY(0); opacity: 1; }
     .toast strong { display: block; margin-bottom: 4px; }
+    .toast-app { color: #b9cbc2; font-size: 12px; margin-bottom: 7px; }
+    .drawer-backdrop { position: fixed; inset: 0; display: grid; justify-items: end; background: rgba(18, 26, 22, .38); opacity: 0; pointer-events: none; transition: opacity .2s; z-index: 30; }
+    .drawer-backdrop.open { opacity: 1; pointer-events: auto; }
+    .drawer { width: min(590px, 94vw); height: 100vh; overflow-y: auto; background: var(--panel); padding: 24px; box-shadow: -18px 0 45px rgba(0,0,0,.18); transform: translateX(100%); transition: transform .25s; }
+    .drawer-backdrop.open .drawer { transform: translateX(0); }
+    .drawer-head { display: flex; justify-content: space-between; gap: 18px; align-items: start; padding-bottom: 17px; border-bottom: 1px solid var(--line); }
+    .drawer-head h2 { font-size: 24px; margin: 5px 0; }
+    .close { border: 1px solid var(--line); background: white; border-radius: 50%; min-width: 36px; height: 36px; }
+    .detail-meta { display: grid; grid-template-columns: 120px 1fr; gap: 9px 14px; padding: 18px 0; border-bottom: 1px solid var(--line); }
+    .detail-meta dt { color: var(--muted); }
+    .detail-meta dd { margin: 0; }
+    .detail-body { padding: 18px 0; }
+    .detail-body h3 { margin: 0 0 10px; }
+    .detail-body p { margin: 0 0 13px; }
+    .detail-actions { display: flex; flex-wrap: wrap; gap: 9px; padding-top: 8px; }
     .empty-note { color: var(--muted); text-align: center; padding: 30px; border: 1px dashed var(--line); border-radius: 12px; }
     @media (max-width: 980px) { .cards { grid-template-columns: repeat(2, 1fr); } .grid-2 { grid-template-columns: 1fr; } }
-    @media (max-width: 720px) { .app { grid-template-columns: 1fr; } aside { position: static; height: auto; } nav { display: flex; overflow-x: auto; } nav button { min-width: max-content; } .side-status { position: static; margin-top: 16px; } main { padding: 22px 15px 40px; } header { flex-direction: column; } .cards { grid-template-columns: 1fr; } .table-wrap { overflow-x: auto; } }
+    @media (max-width: 720px) { .app { grid-template-columns: 1fr; } aside { position: static; height: auto; } nav { display: flex; overflow-x: auto; } nav button { min-width: max-content; } .side-status { position: static; margin-top: 16px; } main { padding: 22px 15px 40px; } header { flex-direction: column; } .cards, .notification-grid { grid-template-columns: 1fr; } .table-wrap { overflow-x: auto; } .detail-meta { grid-template-columns: 1fr; gap: 2px; } }
   </style>
 </head>
 <body>
@@ -121,9 +142,9 @@
           <div class="section">
             <div class="section-head"><h2>剛收到的重大訊息</h2><button class="btn" data-go="material">查看全部</button></div>
             <div class="list">
-              <div class="row"><span class="dot"></span><div><div class="row-title">2330 台積電｜公告取得機器設備</div><div class="row-meta">18:21・上市・財務業務</div></div><span class="badge watch">關注</span></div>
-              <div class="row"><span class="dot"></span><div><div class="row-title">2454 聯發科｜受邀參加法人說明會</div><div class="row-meta">17:54・上市・法說資訊</div></div><span class="badge watch">關注</span></div>
-              <div class="row"><span class="dot amber"></span><div><div class="row-title">2303 聯電｜補充董事會決議事項</div><div class="row-meta">17:38・上市・更正／補充</div></div><span class="badge watch">關注</span></div>
+              <div class="row clickable" role="button" tabindex="0" data-event="tsmc"><span class="dot"></span><div><div class="row-title">2330 台積電｜公告取得機器設備</div><div class="row-meta">18:21・上市・財務業務・點擊查看完整內容</div></div><span class="badge watch">關注</span></div>
+              <div class="row clickable" role="button" tabindex="0" data-event="mediatek"><span class="dot"></span><div><div class="row-title">2454 聯發科｜受邀參加法人說明會</div><div class="row-meta">17:54・上市・法說資訊・點擊查看完整內容</div></div><span class="badge watch">關注</span></div>
+              <div class="row clickable" role="button" tabindex="0" data-event="umc"><span class="dot amber"></span><div><div class="row-title">2303 聯電｜補充董事會決議事項</div><div class="row-meta">17:38・上市・更正／補充・點擊查看完整內容</div></div><span class="badge watch">關注</span></div>
             </div>
           </div>
           <div>
@@ -155,8 +176,8 @@
           <div class="section-head"><div><h2>重大訊息</h2><p class="muted">完整內容保留在本機；同次多筆只發一則彙總通知。</p></div><button class="btn">全部標為已讀</button></div>
           <div class="toolbar"><input type="date" value="2026-09-25"><select><option>全部關注公司</option><option>2330 台積電</option><option>2454 聯發科</option></select><select><option>全部狀態</option><option>未讀</option><option>更正／補充</option></select></div>
           <div class="list">
-            <div class="row"><span class="dot"></span><div><div class="row-title">2330 台積電｜公告取得機器設備</div><p>依公開資訊觀測站發布內容顯示，本次交易為生產用途設備……</p><div class="row-meta">18:21・MOPS 即時來源・首次發現 18:31</div></div><span class="badge watch">未讀</span></div>
-            <div class="row"><span class="dot amber"></span><div><div class="row-title">2303 聯電｜補充董事會決議事項</div><p>本則為先前公告之補充資訊，原始公告仍保留供比對。</p><div class="row-meta">17:38・MOPS 即時來源・關聯原公告 #A102</div></div><span class="badge warn">補充</span></div>
+            <div class="row clickable" role="button" tabindex="0" data-event="tsmc"><span class="dot"></span><div><div class="row-title">2330 台積電｜公告取得機器設備</div><p>依公開資訊觀測站發布內容顯示，本次交易為生產用途設備……</p><div class="row-meta">18:21・MOPS 即時來源・首次發現 18:31・點擊查看完整內容</div></div><span class="badge watch">未讀</span></div>
+            <div class="row clickable" role="button" tabindex="0" data-event="umc"><span class="dot amber"></span><div><div class="row-title">2303 聯電｜補充董事會決議事項</div><p>本則為先前公告之補充資訊，原始公告仍保留供比對。</p><div class="row-meta">17:38・MOPS 即時來源・關聯原公告 #A102・點擊查看完整內容</div></div><span class="badge warn">補充</span></div>
           </div>
         </div>
       </section>
@@ -189,15 +210,39 @@
           <div class="setting"><div><strong>監控時段</strong><p class="muted">跨午夜時段也支援</p></div><div class="fields"><input type="time" value="00:00"><span>至</span><input type="time" value="23:59"></div></div>
           <div class="setting"><div><strong>檢查頻率</strong><p class="muted">預設每 60 分鐘</p></div><select><option>每 15 分鐘</option><option>每 30 分鐘</option><option selected>每 60 分鐘</option><option>每 120 分鐘</option></select></div>
           <div class="setting"><div><strong>違約交割檢查</strong><p class="muted">若資料未更新，19:00 自動再查一次</p></div><input type="time" value="18:30"></div>
+          <div class="setting"><div><strong>本日無違約揭露通知</strong><p class="muted">官方資料更新且明確為零筆時通知</p></div><button class="switch on" aria-label="切換無違約揭露通知"></button></div>
           <div class="setting"><div><strong>Windows 登入後啟動</strong><p class="muted">啟動後縮到系統匣</p></div><button class="switch on" aria-label="切換登入啟動"></button></div>
           <div class="setting"><div><strong>Google Calendar</strong><p class="muted">已連線：reporter@example.com</p></div><button class="btn">管理連線</button></div>
           <div class="setting"><div><strong>本機資料</strong><p class="muted">SQLite・最近備份：尚未建立</p></div><button class="btn">備份／匯出</button></div>
+        </div>
+        <div class="section">
+          <div class="section-head"><div><h2>Windows 通知預覽</h2><p class="muted">按下預覽可查看右下角實際呈現方式；通知點擊行為依單筆或彙總結果導覽。</p></div></div>
+          <div class="notification-grid">
+            <div class="notification-sample"><span class="badge ok">單筆重大訊息</span><strong>台積電發布重大訊息</strong><p class="muted">公告取得機器設備</p><button class="btn notify-preview" data-notify="single">預覽通知</button></div>
+            <div class="notification-sample"><span class="badge watch">彙總通知</span><strong>發現 7 筆重大訊息</strong><p class="muted">台積電、聯發科等 3 家關注公司</p><button class="btn notify-preview" data-notify="summary">預覽通知</button></div>
+            <div class="notification-sample"><span class="badge watch">違約交割</span><strong>今日違約交割揭露已更新</strong><p class="muted">全市場 2 筆、關注公司 1 筆｜2454 聯發科</p><button class="btn notify-preview" data-notify="default">預覽通知</button></div>
+            <div class="notification-sample"><span class="badge warn">監控異常</span><strong>重大訊息監控異常</strong><p class="muted">已連續 3 次無法取得完整資料</p><button class="btn notify-preview" data-notify="failure">預覽通知</button></div>
+          </div>
         </div>
       </section>
     </main>
   </div>
 
-  <div class="toast" role="status" aria-live="polite"><strong id="toast-title">檢查已開始</strong><span id="toast-body">完成後會以 Windows 通知告知結果。</span></div>
+  <div class="toast" role="status" aria-live="polite" title="點擊通知"><div class="toast-app">股市記者小幫手・現在</div><strong id="toast-title">檢查已開始</strong><span id="toast-body">完成後會以 Windows 通知告知結果。</span></div>
+  <div class="drawer-backdrop" id="detail-backdrop" aria-hidden="true">
+    <article class="drawer" role="dialog" aria-modal="true" aria-labelledby="detail-title">
+      <div class="drawer-head"><div><span class="badge watch" id="detail-kind">重大訊息</span><h2 id="detail-title">2330 台積電</h2><p id="detail-subject">公告取得機器設備</p></div><button class="close" id="close-detail" aria-label="關閉完整內容">×</button></div>
+      <dl class="detail-meta">
+        <dt>公司／市場</dt><dd id="detail-company">2330 台積電・上市</dd>
+        <dt>發布時間</dt><dd id="detail-time">2026/09/25 18:21</dd>
+        <dt>首次發現</dt><dd>2026/09/25 18:31</dd>
+        <dt>資料來源</dt><dd>MOPS 即時來源 <span class="badge ok">完整</span></dd>
+        <dt>公告關聯</dt><dd id="detail-relation">無更正或補充關聯</dd>
+      </dl>
+      <div class="detail-body"><h3>完整公告內容</h3><div id="detail-content"><p>1. 標的物之名稱及性質：生產用途之機器設備。</p><p>2. 事實發生日：2026/09/25。</p><p>3. 交易數量、每單位價格及交易總金額：依各項採購合約辦理。本區塊在正式版會呈現公開資訊觀測站提供的完整原文與欄位，不只顯示摘要。</p><p>4. 交易相對人及其與公司之關係：非關係人交易。</p></div></div>
+      <div class="detail-actions"><a class="btn primary" href="https://mopsov.twse.com.tw/mops/web/index" target="_blank" rel="noreferrer">開啟官方原始公告</a><button class="btn" id="mark-read">標為已讀</button></div>
+    </article>
+  </div>
   <script>
     const titles = {
       dashboard: ['今天的市場線索', '2026 年 9 月 25 日・上次更新 18:32'],
@@ -217,6 +262,38 @@
     document.querySelectorAll('[data-panel]').forEach(el => el.addEventListener('click', () => openPanel(el.dataset.panel)));
     document.querySelectorAll('[data-go]').forEach(el => el.addEventListener('click', () => openPanel(el.dataset.go)));
     document.querySelectorAll('.switch').forEach(el => el.addEventListener('click', () => el.classList.toggle('on')));
+    const eventDetails = {
+      tsmc: { title: '2330 台積電', subject: '公告取得機器設備', company: '2330 台積電・上市', time: '2026/09/25 18:21', kind: '重大訊息', relation: '無更正或補充關聯', content: '<p>1. 標的物之名稱及性質：生產用途之機器設備。</p><p>2. 事實發生日：2026/09/25。</p><p>3. 交易數量、每單位價格及交易總金額：依各項採購合約辦理。本區塊在正式版會呈現公開資訊觀測站提供的完整原文與欄位，不只顯示摘要。</p><p>4. 交易相對人及其與公司之關係：非關係人交易。</p>' },
+      mediatek: { title: '2454 聯發科', subject: '受邀參加法人說明會', company: '2454 聯發科・上市', time: '2026/09/25 17:54', kind: '法說資訊', relation: '無更正或補充關聯', content: '<p>1. 召開法人說明會之日期：2026/09/28 14:30。</p><p>2. 召開法人說明會之地點：線上法人說明會。</p><p>3. 法人說明會擇要訊息：說明公司營運概況。</p><p>4. 其他應敘明事項：簡報資料依官方公告為準。</p>' },
+      umc: { title: '2303 聯電', subject: '補充董事會決議事項', company: '2303 聯電・上市', time: '2026/09/25 17:38', kind: '更正／補充', relation: '補充原公告 #A102（可點選查看）', content: '<p>1. 本公告為先前董事會決議事項之補充說明。</p><p>2. 原公告發布時間：2026/09/25 16:10。</p><p>3. 補充內容：新增交易條件及相關說明。正式版會保留原公告與補充公告，方便記者逐筆比對。</p>' }
+    };
+    function openDetail(id) {
+      const item = eventDetails[id];
+      if (!item) return;
+      document.querySelector('#detail-title').textContent = item.title;
+      document.querySelector('#detail-subject').textContent = item.subject;
+      document.querySelector('#detail-company').textContent = item.company;
+      document.querySelector('#detail-time').textContent = item.time;
+      document.querySelector('#detail-kind').textContent = item.kind;
+      document.querySelector('#detail-relation').textContent = item.relation;
+      document.querySelector('#detail-content').innerHTML = item.content;
+      const backdrop = document.querySelector('#detail-backdrop');
+      backdrop.classList.add('open');
+      backdrop.setAttribute('aria-hidden', 'false');
+      document.querySelector('#close-detail').focus();
+    }
+    function closeDetail() {
+      const backdrop = document.querySelector('#detail-backdrop');
+      backdrop.classList.remove('open');
+      backdrop.setAttribute('aria-hidden', 'true');
+    }
+    document.querySelectorAll('[data-event]').forEach(el => {
+      el.addEventListener('click', () => openDetail(el.dataset.event));
+      el.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openDetail(el.dataset.event); } });
+    });
+    document.querySelector('#close-detail').addEventListener('click', closeDetail);
+    document.querySelector('#detail-backdrop').addEventListener('click', event => { if (event.target.id === 'detail-backdrop') closeDetail(); });
+    document.addEventListener('keydown', event => { if (event.key === 'Escape') closeDetail(); });
     let toastTimer;
     function toast(title, body) {
       document.querySelector('#toast-title').textContent = title;
@@ -229,6 +306,15 @@
     document.querySelector('#run-now').addEventListener('click', () => toast('正在檢查 3 項來源', '這是原型示範，不會真的連線或寫入資料。'));
     document.querySelector('#save-settings').addEventListener('click', () => toast('設定已儲存', '重大訊息將全天每 60 分鐘檢查一次。'));
     document.querySelector('#add-company').addEventListener('click', () => toast('新增公司', '正式版會在這裡驗證股票代號並帶入市場與名稱。'));
+    const notificationSamples = {
+      single: ['台積電發布重大訊息', '公告取得機器設備'],
+      summary: ['發現 7 筆重大訊息', '台積電、聯發科等 3 家關注公司'],
+      default: ['今日違約交割揭露已更新', '全市場 2 筆、關注公司 1 筆｜2454 聯發科'],
+      failure: ['重大訊息監控異常', '已連續 3 次無法取得完整資料']
+    };
+    document.querySelectorAll('.notify-preview').forEach(el => el.addEventListener('click', () => toast(...notificationSamples[el.dataset.notify])));
+    document.querySelector('#mark-read').addEventListener('click', () => { closeDetail(); toast('已標為已讀', '這筆訊息仍會保留在完整歷史中。'); });
+    document.querySelector('.toast').addEventListener('click', () => { document.querySelector('.toast').classList.remove('show'); });
   </script>
 </body>
 </html>
