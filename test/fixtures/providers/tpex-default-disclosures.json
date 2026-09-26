@@ -1,0 +1,6 @@
+{
+  "date": "2026-09-26",
+  "stockDetail": [
+    { "date": "2026-09-26", "stockCode": "6488", "companyName": "測試晶圓", "brokerCode": "B003", "defaultAmount": "76500", "remark": "上櫃測試" }
+  ]
+}

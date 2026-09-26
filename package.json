@@ -1,34 +1,63 @@
 {
   "name": "stock-info-collector",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "deploy": "npm run test && build",
-    "build": "pkg index.js -t node18-win-x64 -c package.json"
+  "description": "供財經記者使用的本機市場資訊監控與行事曆小幫手",
+  "main": ".vite/build/main.js",
+  "productName": "股市記者小幫手",
+  "engines": {
+    "node": "22.x"
   },
-  "pkg": {
-    "assets": [
-      "node_modules/**/*"
-    ],
-    "outputPath": "dist"
+  "scripts": {
+    "start": "electron-forge start",
+    "build": "electron-forge package",
+    "make": "electron-forge make",
+    "v1:start": "node index.js",
+    "test:characterization": "node --test test/characterization/*.test.cjs",
+    "test:architecture": "node --test test/architecture/*.test.cjs",
+    "test:traceability": "node --test test/architecture/scenario-traceability.test.cjs",
+    "test:unit": "vitest run --project unit",
+    "test:integration": "vitest run --project integration",
+    "test:ui": "vitest run --project ui",
+    "test:e2e": "playwright test",
+    "test": "npm run test:characterization && npm run test:architecture && npm run test:unit && npm run test:integration && npm run test:ui && npm run test:e2e && npm run test:traceability",
+    "coverage": "vitest run --coverage --project unit --project integration && node scripts/run-quality-gates.cjs"
   },
   "author": "willy_chen",
   "license": "ISC",
   "devDependencies": {
+    "@electron-forge/cli": "7.11.2",
+    "@electron-forge/core": "7.11.2",
+    "@electron-forge/maker-squirrel": "7.11.2",
+    "@electron-forge/plugin-vite": "7.11.2",
+    "@playwright/test": "1.63.0",
+    "@testing-library/jest-dom": "7.0.1",
+    "@testing-library/react": "16.3.3",
+    "@testing-library/user-event": "14.6.7",
+    "@types/better-sqlite3": "7.6.13",
     "@types/express": "^4.17.21",
-    "@types/node": "^20.12.7",
+    "@types/node": "22.20.4",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.1.1",
+    "@vitest/coverage-v8": "5.0.2",
+    "electron": "44.4.5",
+    "jsdom": "30.1.1",
     "nodemon": "^3.1.0",
+    "playwright": "1.63.0",
     "ts-node": "^10.9.2",
-    "typescript": "^5.4.5"
+    "typescript": "7.0.2",
+    "vite": "8.3.1",
+    "vitest": "5.0.2"
   },
   "dependencies": {
     "@google-cloud/local-auth": "^2.1.0",
     "axios": "^1.6.8",
+    "better-sqlite3": "13.0.3",
     "cheerio": "^1.0.0-rc.12",
     "config": "^3.3.11",
     "googleapis": "^105.0.0",
-    "log4js": "^6.9.1"
+    "log4js": "^6.9.1",
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
   }
 }

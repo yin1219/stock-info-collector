@@ -1,0 +1,5 @@
+[
+  { "SecuritiesCompanyCode": "6488", "CompanyName": "環球晶圓股份有限公司" },
+  { "SecuritiesCompanyCode": "2330", "CompanyName": "錯誤市場測試股份有限公司" },
+  { "SecuritiesCompanyCode": "BAD", "CompanyName": "無效代號" }
+]

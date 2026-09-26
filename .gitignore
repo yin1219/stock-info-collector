@@ -1,8 +1,15 @@
 dist/
+out/
+artifacts/
+.vite/
+coverage/
+test-results/
+playwright-report/
 node_modules/
 Log/
 credentials.json
 token.json
 token_readonly.json
+token*.json
 stock-info-collector.zip
 stock-info-collector/

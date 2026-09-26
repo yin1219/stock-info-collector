@@ -4,6 +4,45 @@
 
 > 目前專案只處理法說會蒐集與行事曆登錄，不提供股價、財報分析、投資建議或交易功能。
 
+> v2 已有離線資料層、監控 providers、排程核心、通知與部分介面，並可產出 Windows Squirrel 安裝包；但正式模式 Windows renderer 曾回報 `launch-failed`／退出碼 49，且系統匣、Google OAuth/Calendar UI 與正式安裝升級驗收尚未完成。完成 Windows 驗收前，日常使用仍以 v1 為準。
+
+## v2 開發狀態
+
+v2 目標為 Electron Forge、Vite、React、TypeScript、SQLite 桌面程式。開發基準為 Node.js 22.x；v1 的 Node.js／Calendar 操作流程仍獨立保留。
+
+目前已建立 Vitest、React Testing Library、Playwright Electron 與 SQLite 測試分層。`npm test` 涵蓋 characterization、architecture、unit、SQLite/provider integration、React UI、隔離 Electron E2E 與 Scenario traceability；測試使用 fixtures/fakes/temp userData，不連 live 官方網站或真實 Google 帳號。`npm run coverage` 目前 domain/services 品質門檻通過。`npm run make` 可產出 Squirrel 安裝包至 `artifacts/forge-out/make/squirrel.windows/x64/`；目前已建置但尚未在隔離 Windows 使用者設定檔執行安裝／啟動／升級／移除驗收。
+
+正式模式仍有已知 Windows renderer 啟動問題（log 曾出現 `launch-failed`、平台退出碼 49），尚未定位原因。不要將隔離 E2E 的 Chromium sandbox override 移到正式啟動路徑，也不要依賴 v2 的正式排程直到 Windows 驗收完成。Google OAuth 與 Calendar 同步目前尚未接入 v2 使用者流程；v1 `index.js` 繼續保留原行為。
+
+```powershell
+npm ci
+npm run test:characterization
+npm run test:architecture
+npm run test:unit
+npm run test:integration
+npm run test:ui
+npm run test:traceability
+```
+
+Node.js 版本請使用 22.x（`package.json` engines）。安裝 Windows 產物需在 Windows 執行：
+
+```powershell
+npm run make
+# 產物：artifacts/forge-out/make/squirrel.windows/x64/StockReporterAssistantSetup.exe
+```
+
+此安裝包尚未完成首次安裝、覆蓋升級及移除驗收；建置成功不等同於已驗證可供日常使用。未簽章安裝包可能觸發 Windows SmartScreen。
+
+`npm run test:e2e` 與 `npm test` 會啟動 Electron。E2E 僅以獨立暫存 userData 驗證 renderer/UI；測試專用 `--no-sandbox` 不得移至正式啟動路徑。標準測試只使用固定 fixture、fake ports、暫存 SQLite 與獨立暫存 userData，不得連官方網站、真實 Google 帳號或正式 userData。
+
+## v2 本機資料與敏感資訊
+
+- Electron 執行期資料以 `app.getPath('userData')` 為根目錄；Windows 預設位於目前使用者的 `%APPDATA%` 下（實際路徑依 Electron app identity 而定）。診斷紀錄位於該目錄 `logs/application.log`，記錄事件、錯誤訊息與可用錯誤代碼；token／secret 類訊息會遮罩。請勿將 log 貼到公開 issue 前先檢查個資。
+- Google OAuth token 只允許透過 Electron `safeStorage` 加密後寫入 userData 的 `oauth-token.enc`。若作業系統加密不可用，程式會拒絕保存，不會降級寫明文。renderer 不可直接存取該檔案或 token。
+- v2 JSON 匯出格式為版本 1，會匯出業務資料與非敏感設定，並排除含 token、secret、credential、password 或 authorization 欄位的設定。匯出功能尚未接上使用者介面；資料庫自動備份會在升級 migration 前建立 `.pre-v2.backup`，但端到端復原 UI／操作驗收仍未完成。需要備份時先關閉應用程式，再複製整個 userData 目錄至安全位置；不要只複製正在使用的 SQLite 主檔而漏掉 WAL。
+- 手動復原時先結束應用程式，將目前 userData 目錄另行改名保留，再以備份的完整目錄還原至原 userData 位置；重新啟動後確認清單與歷史資料。若資料庫 migration 啟動失敗，保留 log 與 `.pre-v2.backup`，不要反覆刪除或覆蓋資料檔。
+- v1 的 `credentials.json`、`token.json`、`token_bak.json` 與 log 仍屬敏感／執行期資料；不應提交、貼入 issue 或複製到 v2 測試資料。
+
 ## 目前功能
 
 - 依 `config/default.json` 中的股號清單查詢法說會。
@@ -168,8 +207,8 @@ Get-ScheduledTask -TaskName "stock-info-collector-daily-work"
 | --- | --- |
 | `node index.js` | 執行一次完整蒐集流程 |
 | `npm run build` | 使用 `pkg` 建立 Windows x64 執行檔 |
-| `npm test` | 尚未建立自動化測試，這個指令目前固定失敗 |
-| `npm run deploy` | 目前會先執行固定失敗的測試，且後段不是有效的 npm script 呼叫，暫時不可用 |
+| `npm test` | v2 完整測試流程，包含 Electron E2E；目前部分 OpenSpec Scenario 尚未實作 |
+| `npm run deploy` | v1 舊部署指令仍不可用 |
 
 ## 安全與使用注意事項
 
