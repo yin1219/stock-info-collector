@@ -1,0 +1,25 @@
+{
+  "status": "success",
+  "data": [
+    {
+      "CDATE": "115/09/26",
+      "CTIME": "07:00:04",
+      "TYPEK": "上市",
+      "COMPANY_ID": "2330",
+      "COMPANY_NAME": "測試半導體",
+      "SUBJECT": "董事會決議",
+      "AN_CODE": "M00",
+      "HYPERLINK": "https://mopsov.twse.com.tw/mops/web/ajax_t05sr01_1?firstin=true&step=1&SEQ_NO=2&SPOKE_TIME=70004&SPOKE_DATE=20260926&COMPANY_ID=2330"
+    },
+    {
+      "CDATE": "115/09/26",
+      "CTIME": "17:45:00",
+      "TYPEK": "上櫃",
+      "COMPANY_ID": "6488",
+      "COMPANY_NAME": "測試晶圓",
+      "SUBJECT": "公告營運事項",
+      "AN_CODE": "M00",
+      "HYPERLINK": "https://mopsov.twse.com.tw/mops/web/ajax_t05sr01_1?firstin=true&step=1&SEQ_NO=1&SPOKE_TIME=174500&SPOKE_DATE=20260926&COMPANY_ID=6488"
+    }
+  ]
+}

@@ -28,17 +28,17 @@ describe('watchlist-management / add / saves a valid listed company', () => {
   });
 });
 
-describe('watchlist-management / deactivate / retains historical events when disabling a company', () => {
-  it('edits metadata and removes membership by deactivating instead of deleting', () => {
+describe('watchlist-management / remove / keeps removal distinct from disabling', () => {
+  it('edits metadata, removes membership, and keeps disabling separate', () => {
     const calls: unknown[][] = [];
     const repository = {
       updateDetails(companyId: string, details: { category: string; notes: string }, updatedAt: string) {
         calls.push(['details', companyId, details, updatedAt]);
         return { companyId, ...details };
       },
-      remove(companyId: string, updatedAt: string) {
-        calls.push(['deactivate', companyId, updatedAt]);
-        return { companyId, active: false };
+      remove(companyId: string) {
+        calls.push(['remove', companyId]);
+        return { companyId };
       },
       setActive(companyId: string, active: boolean, updatedAt: string) {
         calls.push(['active', companyId, active, updatedAt]);
@@ -48,11 +48,11 @@ describe('watchlist-management / deactivate / retains historical events when dis
 
     expect(updateWatchlistCompany(repository, 'company-1', { category: ' 半導體 ', notes: '追蹤' }, '2026-09-26T00:00:00Z'))
       .toEqual({ companyId: 'company-1', category: '半導體', notes: '追蹤' });
-    expect(removeWatchlistCompany(repository, 'company-1', '2026-09-26T00:01:00Z')).toEqual({ companyId: 'company-1', active: false });
+    expect(removeWatchlistCompany(repository, 'company-1')).toEqual({ companyId: 'company-1' });
     expect(setWatchlistCompanyActive(repository, 'company-1', false, '2026-09-26T00:02:00Z')).toEqual({ companyId: 'company-1', active: false });
     expect(calls).toEqual([
       ['details', 'company-1', { category: '半導體', notes: '追蹤' }, '2026-09-26T00:00:00Z'],
-      ['deactivate', 'company-1', '2026-09-26T00:01:00Z'],
+      ['remove', 'company-1'],
       ['active', 'company-1', false, '2026-09-26T00:02:00Z'],
     ]);
   });

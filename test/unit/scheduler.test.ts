@@ -70,6 +70,58 @@ describe('monitoring-schedule / overlap / rejects duplicate immediate run while 
   });
 });
 
+describe('monitoring-schedule / manual retries / starts a fresh job after a prior check finishes', () => {
+  it('uses a new persisted key for each completed click in the same Taipei minute', async () => {
+    const persistedKeys = new Set<string>();
+    let sourceFetches = 0;
+    const scheduler = createMonitoringScheduler({
+      now: () => time('2026-09-26T01:30:00.000Z'),
+      monitoring: {
+        enabled: false, start: '00:00', end: '00:00', intervalMinutes: 60, lastCheckedAt: () => null,
+        run: async (key) => {
+          if (persistedKeys.has(key)) return;
+          persistedKeys.add(key);
+          sourceFetches += 1;
+        },
+      },
+      disclosure: {
+        enabled: false, runAt: '18:30', lastSuccessfulLocalDate: () => null,
+        run: async (key) => {
+          if (persistedKeys.has(key)) return;
+          persistedKeys.add(key);
+          sourceFetches += 1;
+        },
+      },
+    });
+
+    const materialFirst = await scheduler.runNow('material');
+    const materialSecond = await scheduler.runNow('material');
+    const disclosureFirst = await scheduler.runNow('disclosure');
+    const disclosureSecond = await scheduler.runNow('disclosure');
+
+    expect(materialFirst.idempotencyKey).not.toBe(materialSecond.idempotencyKey);
+    expect(disclosureFirst.idempotencyKey).not.toBe(disclosureSecond.idempotencyKey);
+    expect(sourceFetches).toBe(4);
+  });
+});
+
+describe('monitoring-schedule / settings / applies updates without restarting the scheduler', () => {
+  it('uses persisted enabled, time-window, interval and daily time values on the next tick', async () => {
+    let calls = 0;
+    const scheduler = createMonitoringScheduler({
+      now: () => time('2026-09-26T10:31:00.000Z'),
+      monitoring: { enabled: true, start: '00:00', end: '00:00', intervalMinutes: 60, lastCheckedAt: () => null, run: async () => { calls += 1; } },
+      disclosure: { enabled: true, runAt: '18:30', lastSuccessfulLocalDate: () => null, run: async () => { calls += 1; } },
+    });
+    scheduler.updateSettings({
+      monitoring: { enabled: false, start: '08:00', end: '17:00', intervalMinutes: 30 },
+      disclosure: { enabled: false, runAt: '19:00' },
+    });
+    await expect(scheduler.tick()).resolves.toEqual([]);
+    expect(calls).toBe(0);
+  });
+});
+
 describe('default-disclosure-monitoring / stale retry / runs once at 19:00 only after stale data', () => {
   it('uses a distinct retry key and never repeats an already-created retry', async () => {
     let calls = 0;

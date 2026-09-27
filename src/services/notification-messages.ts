@@ -8,6 +8,7 @@ export interface MaterialNotificationEvent {
 export type NotificationRoute =
   | { type: 'event-detail'; eventId: string }
   | { type: 'event-list'; eventIds: string[] }
+  | { type: 'source-status' }
   | { type: 'disclosure-list' };
 
 export interface NotificationMessage {
@@ -57,5 +58,18 @@ export function buildDisclosureNotification(input: {
     title: '違約交割揭露',
     body: watchedCompanies.length > 0 ? `${summary}：${watchedCompanies.join('、')}` : summary,
     route: { type: 'disclosure-list' },
+  };
+}
+
+export function buildSourceFailureNotification(input: {
+  source: string;
+  consecutiveFailures: number;
+  errorMessage?: string | null;
+}): NotificationMessage {
+  const detail = input.errorMessage?.trim();
+  return {
+    title: '資料來源異常',
+    body: `${input.source} 連續 ${input.consecutiveFailures} 次無法取得完整資料${detail ? `：${detail}` : ''}`,
+    route: { type: 'source-status' },
   };
 }

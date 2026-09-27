@@ -31,7 +31,8 @@ function normalizeDate(value: string): string {
 
 function normalizeInstant(date: string, rawTime: string): string {
   const time = rawTime || '00:00:00';
-  const match = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(time);
+  const match = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(time)
+    ?? /^(\d{1,2})(\d{2})(\d{2})$/.exec(time);
   if (!match) throw new Error(`結構化重大訊息時間格式無效：${time}`);
   const [year, month, day] = date.split('-').map(Number);
   const [hour, minute, second = '00'] = match.slice(1);
@@ -49,8 +50,8 @@ function payloadRows(payload: unknown): { rows: unknown[]; dataDate: string } {
   return { rows, dataDate: dataDate ? normalizeDate(dataDate) : '' };
 }
 
-const rowDateAliases = ['發言日期', '公告日期', '日期', 'Date', 'date'];
-const codeAliases = ['公司代號', '股票代號', '股票代碼', '證券代號', 'stockCode', '公司代碼'];
+const rowDateAliases = ['出表日期', 'Date', 'date', '發言日期', '公告日期', '日期'];
+const codeAliases = ['公司代號', '股票代號', '股票代碼', '證券代號', 'stockCode', '公司代碼', 'SecuritiesCompanyCode'];
 const titleAliases = ['主旨', '公告主旨', 'subject', 'title'];
 
 export function createMaterialReconciliationProvider(

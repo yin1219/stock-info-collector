@@ -5,6 +5,7 @@ export interface DisclosureIpcPort {
 
 export interface DisclosureReadService {
   list(filter: { disclosureDate?: string; market?: 'TWSE' | 'TPEX' }): unknown;
+  monitorStatus(): unknown;
 }
 
 export function registerDisclosureIpc(
@@ -30,5 +31,10 @@ export function registerDisclosureIpc(
       ...(value.market === 'TWSE' || value.market === 'TPEX' ? { market: value.market } : {}),
     });
   });
-  return () => ipcMain.removeHandler?.(channel);
+  const statusChannel = 'disclosures:status';
+  ipcMain.handle(statusChannel, (event) => {
+    if (!isTrustedSender(event)) throw new Error('拒絕不受信任的 renderer IPC 呼叫');
+    return service.monitorStatus();
+  });
+  return () => { ipcMain.removeHandler?.(channel); ipcMain.removeHandler?.(statusChannel); };
 }

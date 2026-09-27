@@ -60,6 +60,7 @@ interface Conference {
   startsAt: string;
   location: string;
   content: string;
+  sourceUrl: string;
 }
 
 interface CalendarSync {
@@ -117,7 +118,7 @@ const companyColumns = `id, market, stock_code AS stockCode, name, updated_at AS
 const watchlistColumns = `id, company_id AS companyId, active, category, notes, created_at AS createdAt, updated_at AS updatedAt`;
 const materialEventColumns = `id, company_id AS companyId, source_key AS sourceKey, content_fingerprint AS contentFingerprint, title, content, published_at AS publishedAt, revision_of AS revisionOf, source, source_url AS sourceUrl, discovered_at AS discoveredAt, read_at AS readAt, event_type AS eventType`;
 const disclosureColumns = `id, company_id AS companyId, market, disclosure_date AS disclosureDate, stock_code AS stockCode, broker_code AS brokerCode, source_key AS sourceKey, disclosed_at AS disclosedAt, content_json AS contentJson`;
-const conferenceColumns = `id, company_id AS companyId, stock_code AS stockCode, company_name AS companyName, source_key AS sourceKey, starts_at AS startsAt, location, content`;
+const conferenceColumns = `id, company_id AS companyId, stock_code AS stockCode, company_name AS companyName, source_key AS sourceKey, starts_at AS startsAt, location, content, source_url AS sourceUrl`;
 const calendarSyncColumns = `id, conference_id AS conferenceId, status, calendar_event_id AS calendarEventId, last_error AS lastError, updated_at AS updatedAt`;
 const sourceCheckColumns = `id, job_run_id AS jobRunId, source, status, data_date AS dataDate, record_count AS recordCount, checked_at AS checkedAt, error_message AS errorMessage`;
 const notificationColumns = `id, job_run_id AS jobRunId, event_id AS eventId, dedupe_key AS dedupeKey, channel, payload_json AS payloadJson, status, created_at AS createdAt`;
@@ -212,8 +213,11 @@ export function createRepositories(database: SQLiteDatabase) {
         if (result.changes !== 1) throw new Error(`Watchlist entry not found for company: ${companyId}`);
         return this.find(companyId)!;
       },
-      remove(companyId: string, updatedAt: string): WatchlistEntry {
-        return this.setActive(companyId, false, updatedAt);
+      remove(companyId: string): WatchlistEntry {
+        const entry = database.prepare(`DELETE FROM watchlist_entries WHERE company_id = ? RETURNING ${watchlistColumns}`)
+          .get(companyId) as (Omit<WatchlistEntry, 'active'> & { active: number }) | undefined;
+        if (!entry) throw new Error(`Watchlist entry not found for company: ${companyId}`);
+        return { ...entry, active: entry.active === 1 };
       },
     },
 
@@ -249,6 +253,12 @@ export function createRepositories(database: SQLiteDatabase) {
         return database.prepare(`SELECT ${materialEventColumns} FROM material_events WHERE source_key = ?`)
           .get(sourceKey) as MaterialEvent | undefined;
       },
+      findNearbyAnnouncement(companyId: string, title: string, publishedAt: string): MaterialEvent | undefined {
+        return database.prepare(`SELECT ${materialEventColumns} FROM material_events
+          WHERE company_id = ? AND title = ? AND ABS(unixepoch(published_at) - unixepoch(?)) <= 60
+          ORDER BY ABS(unixepoch(published_at) - unixepoch(?)) LIMIT 1`)
+          .get(companyId, title, publishedAt, publishedAt) as MaterialEvent | undefined;
+      },
       details(id: string): (MaterialEvent & { market: Market; stockCode: string; companyName: string; relatedRevisions: MaterialEvent[] }) | undefined {
         const columns = `${materialEventColumns.split(', ').map((column) => `e.${column}`).join(', ')}, c.market, c.stock_code AS stockCode, c.name AS companyName`;
         const item = database.prepare(`SELECT ${columns} FROM material_events e
@@ -259,10 +269,11 @@ export function createRepositories(database: SQLiteDatabase) {
           WHERE revision_of = ? ORDER BY published_at`).all(id) as MaterialEvent[];
         return { ...item, relatedRevisions };
       },
-      list(options: { query?: string; unreadOnly?: boolean; eventIds?: string[]; limit?: number } = {}): Array<MaterialEvent & { market: Market; stockCode: string; companyName: string }> {
+      list(options: { query?: string; unreadOnly?: boolean; watchedOnly?: boolean; eventIds?: string[]; limit?: number } = {}): Array<MaterialEvent & { market: Market; stockCode: string; companyName: string }> {
         const conditions: string[] = [];
         const parameters: Array<string | number> = [];
         if (options.unreadOnly) conditions.push('e.read_at IS NULL');
+        if (options.watchedOnly) conditions.push('EXISTS (SELECT 1 FROM watchlist_entries w WHERE w.company_id = e.company_id AND w.active = 1)');
         if (options.eventIds) {
           if (options.eventIds.length === 0) return [];
           conditions.push(`e.id IN (${options.eventIds.map(() => '?').join(', ')})`);
@@ -318,14 +329,15 @@ export function createRepositories(database: SQLiteDatabase) {
     },
 
     conferences: {
-      upsert(input: Omit<Conference, 'id'>): Conference {
+      upsert(input: Omit<Conference, 'id' | 'sourceUrl'> & { sourceUrl?: string }): Conference {
         return database.prepare(`
-          INSERT INTO conferences (id, company_id, stock_code, company_name, source_key, starts_at, location, content)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          INSERT INTO conferences (id, company_id, stock_code, company_name, source_key, starts_at, location, content, source_url)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT (source_key) DO UPDATE SET company_id = excluded.company_id, starts_at = excluded.starts_at,
-            location = excluded.location, content = excluded.content, company_name = excluded.company_name
+            location = excluded.location, content = excluded.content, company_name = excluded.company_name,
+            source_url = excluded.source_url
           RETURNING ${conferenceColumns}
-        `).get(randomUUID(), input.companyId, input.stockCode, input.companyName, input.sourceKey, input.startsAt, input.location, input.content) as Conference;
+        `).get(randomUUID(), input.companyId, input.stockCode, input.companyName, input.sourceKey, input.startsAt, input.location, input.content, input.sourceUrl ?? '') as Conference;
       },
       find(id: string): Conference | undefined {
         return database.prepare(`SELECT ${conferenceColumns} FROM conferences WHERE id = ?`)
@@ -400,6 +412,15 @@ export function createRepositories(database: SQLiteDatabase) {
       find(jobRunId: string, source: string): SourceCheck | undefined {
         return database.prepare(`SELECT ${sourceCheckColumns} FROM source_checks WHERE job_run_id = ? AND source = ?`)
           .get(jobRunId, source) as SourceCheck | undefined;
+      },
+      list(jobRunId: string): SourceCheck[] {
+        return database.prepare(`SELECT ${sourceCheckColumns} FROM source_checks WHERE job_run_id = ? ORDER BY source`)
+          .all(jobRunId) as SourceCheck[];
+      },
+      history(source: string, limit = 100): SourceStatus[] {
+        if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1_000) throw new RangeError('來源狀態歷史筆數超出範圍');
+        return database.prepare('SELECT status FROM source_checks WHERE source = ? ORDER BY rowid DESC LIMIT ?')
+          .all(source, limit).map((row) => (row as { status: SourceStatus }).status);
       },
     },
 

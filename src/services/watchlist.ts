@@ -26,7 +26,7 @@ export interface WatchlistRepositoryPort {
 export interface WatchlistManagementRepository {
   updateDetails(companyId: string, details: { category: string; notes: string }, updatedAt: string): unknown;
   setActive(companyId: string, active: boolean, updatedAt: string): unknown;
-  remove(companyId: string, updatedAt: string): unknown;
+  remove(companyId: string): unknown;
 }
 
 export function updateWatchlistCompany(
@@ -53,9 +53,8 @@ export function setWatchlistCompanyActive(
 export function removeWatchlistCompany(
   repository: Pick<WatchlistManagementRepository, 'remove'>,
   companyId: string,
-  updatedAt: string,
 ): unknown {
-  return repository.remove(companyId, updatedAt);
+  return repository.remove(companyId);
 }
 
 export function addListedCompany(dependencies: {

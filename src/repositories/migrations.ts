@@ -155,6 +155,13 @@ const initialMigrations: readonly Migration[] = [
       `);
     },
   },
+  {
+    version: 4,
+    name: 'conference provenance',
+    up(database) {
+      database.exec("ALTER TABLE conferences ADD COLUMN source_url TEXT NOT NULL DEFAULT '';");
+    },
+  },
 ];
 
 export function openDatabase(filename: string, options: OpenDatabaseOptions = {}): SQLiteDatabase {

@@ -8,6 +8,7 @@ playwright-report/
 node_modules/
 Log/
 credentials.json
+google-oauth-client.json
 token.json
 token_readonly.json
 token*.json

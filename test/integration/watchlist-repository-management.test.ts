@@ -12,8 +12,8 @@ afterEach(async () => {
   paths = undefined;
 });
 
-describe('watchlist-management / deactivate / retains historical events when disabling a company', () => {
-  it('updates active state and details, and removes only the watchlist membership', async () => {
+describe('watchlist-management / remove / retains historical events after deleting membership', () => {
+  it('removes the company from the visible watchlist while retaining saved history', async () => {
     paths = await createTestPaths();
     database = openDatabase(paths.database);
     const repositories = createRepositories(database);
@@ -39,11 +39,13 @@ describe('watchlist-management / deactivate / retains historical events when dis
       companyId: company.id, market: 'TWSE', stockCode: '2330', active: true,
     }));
     repositories.watchlist.updateDetails(company.id, { category: '半導體', notes: '重點公司' }, '2026-09-26T00:01:00Z');
-    repositories.watchlist.remove(company.id, '2026-09-26T00:02:00Z');
+    repositories.watchlist.remove(company.id);
 
     expect(repositories.watchlist.list({ activeOnly: true })).toEqual([]);
-    expect(repositories.watchlist.find(company.id)).toMatchObject({ active: false, category: '半導體', notes: '重點公司' });
-    expect(repositories.watchlist.isWatched('TWSE', '2330')).toBe(true);
+    expect(repositories.watchlist.list()).toEqual([]);
+    expect(repositories.watchlist.find(company.id)).toBeUndefined();
+    expect(repositories.watchlist.isWatched('TWSE', '2330')).toBe(false);
+    expect(repositories.companies.findByStockCode('2330', 'TWSE')).toMatchObject({ id: company.id });
     expect(repositories.materialEvents.find(event.id)).toMatchObject({ title: '董事會決議', content: '公告全文' });
     expect(entry.companyId).toBe(company.id);
   });

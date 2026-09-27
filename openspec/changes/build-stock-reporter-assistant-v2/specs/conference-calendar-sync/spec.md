@@ -27,6 +27,13 @@
 - **WHEN** Google 拒絕已保存的授權憑證
 - **THEN** 系統停止該次寫入、保留待同步項目並提示使用者重新授權
 
+### Requirement: 使用者可直接啟動 Google OAuth
+系統 SHALL 使用由應用程式提供的桌面 OAuth client 設定。一般使用者 SHALL 可直接選擇連線並在系統瀏覽器完成授權，不得要求使用者自行建立或匯入 OAuth client JSON。
+
+#### Scenario: 首次連線不需匯入 client JSON
+- **WHEN** 使用者在尚未授權的應用程式選擇「連線 Google Calendar」
+- **THEN** 系統使用應用程式的 OAuth client 啟動系統瀏覽器授權流程，並將取得的 token 加密保存；不要求使用者選取 OAuth 設定檔
+
 ### Requirement: 單筆失敗不阻斷整批處理
 系統 SHALL 對每筆法說會分別記錄同步結果，使單筆資料或 API 錯誤不會取消其他可處理項目。
 

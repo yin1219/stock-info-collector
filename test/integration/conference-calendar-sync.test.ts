@@ -9,9 +9,63 @@ afterEach(async () => { await paths?.cleanup(); paths = undefined; });
 
 const conference = (CompId: string, CompName: string, Time: string) => ({
   CompId, CompName, Time, Location: '線上法人說明會', Content: 'fixture 內容',
+  SourceUrl: `https://mops.twse.com.tw/mops/web/t100sb07_1?co_id=${CompId}`,
 });
 
 describe('conference-calendar-sync / service integration', () => {
+  it('keeps a locally synced conference idempotent without querying Calendar again', async () => {
+    paths = await createTestPaths();
+    const database = openDatabase(paths.database);
+    const repositories = createRepositories(database);
+    let calendarCalls = 0;
+    const service = createConferenceSyncService({
+      repositories,
+      calendar: {
+        async hasEvent() { calendarCalls += 1; return false; },
+        async insert() { calendarCalls += 1; return { id: 'existing-local-event-id' }; },
+      },
+      now: () => '2026-09-25T00:00:00.000Z',
+    });
+    try {
+      const source = conference('2317', '測試電子股份有限公司', '115/09/29 時間：10 點 0 分 (24小時制)');
+      const first = await service.sync([source]);
+      expect(first[0]).toMatchObject({ status: 'synced' });
+      expect(calendarCalls).toBe(2);
+
+      const second = await service.sync([source]);
+      expect(second[0]).toMatchObject({ status: 'synced', conferenceId: first[0].conferenceId });
+      expect(calendarCalls).toBe(2);
+      expect(repositories.calendarSyncs.find(first[0].conferenceId!)).toMatchObject({
+        status: 'synced', calendarEventId: 'existing-local-event-id',
+      });
+    } finally { database.close(); }
+  });
+
+  it('keeps a previously found Calendar event marked existing on a repeated sync', async () => {
+    paths = await createTestPaths();
+    const database = openDatabase(paths.database);
+    const repositories = createRepositories(database);
+    let lookups = 0;
+    let inserts = 0;
+    const service = createConferenceSyncService({
+      repositories,
+      calendar: {
+        async hasEvent() { lookups += 1; return lookups === 1; },
+        async insert() { inserts += 1; return { id: 'should-not-exist' }; },
+      },
+      now: () => '2026-09-25T00:00:00.000Z',
+    });
+    try {
+      const source = conference('2454', '聯發科技股份有限公司', '115/09/28 時間：14 點 30 分 (24小時制)');
+      const first = await service.sync([source]);
+      const second = await service.sync([source]);
+      expect(first[0].status).toBe('existing');
+      expect(second[0].status).toBe('existing');
+      expect(lookups).toBe(1);
+      expect(inserts).toBe(0);
+    } finally { database.close(); }
+  });
+
   it('stores sync outcomes, avoids existing calendar events, and continues after one invalid event', async () => {
     paths = await createTestPaths();
     const database = openDatabase(paths.database);
@@ -37,6 +91,9 @@ describe('conference-calendar-sync / service integration', () => {
       expect(calendarCalls).toEqual(['2454-聯發科技股份有限公司 法說會', '2317-測試電子股份有限公司 法說會']);
       expect(inserts).toEqual(['2317-測試電子股份有限公司 法說會']);
       expect(repositories.conferences.list()).toHaveLength(2);
+      expect(repositories.conferences.find(result[0].conferenceId!)).toMatchObject({
+        sourceUrl: 'https://mops.twse.com.tw/mops/web/t100sb07_1?co_id=2454',
+      });
       expect(repositories.calendarSyncs.find(result[0].conferenceId!)).toMatchObject({ status: 'existing' });
       expect(repositories.calendarSyncs.find(result[2].conferenceId!)).toMatchObject({ status: 'synced', calendarEventId: 'calendar:2317-測試電子股份有限公司 法說會' });
     } finally { database.close(); }
@@ -91,6 +148,68 @@ describe('conference-calendar-sync / service integration', () => {
       expect(repositories.calendarSyncs.find(results[2].conferenceId!)).toMatchObject({ status: 'synced', calendarEventId: null });
       expect(results[3]).toMatchObject({ status: 'failed', errorMessage: 'raw calendar insertion failure' });
       expect(repositories.calendarSyncs.find(results[3].conferenceId!)).toMatchObject({ status: 'failed', lastError: 'raw calendar insertion failure' });
+    } finally { database.close(); }
+  });
+
+  it('stops Calendar writes on rejected credentials and keeps all unsynced conferences pending', async () => {
+    paths = await createTestPaths();
+    const database = openDatabase(paths.database);
+    const repositories = createRepositories(database);
+    let calendarCalls = 0;
+    const service = createConferenceSyncService({
+      repositories,
+      calendar: {
+        async hasEvent() { calendarCalls += 1; const error = new Error('invalid_grant'); Object.assign(error, { code: 401 }); throw error; },
+        async insert() { calendarCalls += 1; return {}; },
+      },
+      now: () => '2026-09-25T00:00:00.000Z',
+    });
+    try {
+      const results = await service.sync([
+        conference('2330', '測試公司', '115/09/29 時間：10 點 0 分 (24小時制)'),
+        conference('2317', '另一測試公司', '115/09/29 時間：11 點 0 分 (24小時制)'),
+      ]);
+      expect(calendarCalls).toBe(1);
+      expect(results.map(({ status }) => status)).toEqual(['failed', 'pending']);
+      expect(repositories.conferences.list()).toHaveLength(2);
+      expect(repositories.calendarSyncs.find(results[0].conferenceId!)).toMatchObject({ status: 'pending' });
+      expect(repositories.calendarSyncs.find(results[1].conferenceId!)).toMatchObject({ status: 'pending' });
+      expect(results[0]).toMatchObject({ authorizationRequired: true });
+    } finally { database.close(); }
+  });
+
+  it('reports a storage failure per conference and does not call Calendar', async () => {
+    paths = await createTestPaths();
+    const database = openDatabase(paths.database);
+    const repositories = createRepositories(database);
+    repositories.transaction = () => { throw new Error('disk is read-only'); };
+    let calendarCalls = 0;
+    const service = createConferenceSyncService({
+      repositories,
+      calendar: { async hasEvent() { calendarCalls += 1; return false; }, async insert() { calendarCalls += 1; return {}; } },
+      now: () => '2026-09-25T00:00:00.000Z',
+    });
+    try {
+      const result = await service.sync([conference('2330', '測試公司', '115/09/29 時間：10 點 0 分 (24小時制)')]);
+      expect(result).toMatchObject([{ status: 'failed', errorMessage: 'disk is read-only' }]);
+      expect(calendarCalls).toBe(0);
+      expect(repositories.conferences.list()).toHaveLength(0);
+    } finally { database.close(); }
+  });
+
+  it('recognizes a string-form OAuth rejection and leaves the attempted conference pending', async () => {
+    paths = await createTestPaths();
+    const database = openDatabase(paths.database);
+    const repositories = createRepositories(database);
+    const service = createConferenceSyncService({
+      repositories,
+      calendar: { async hasEvent() { throw 'invalid_grant'; }, async insert() { return {}; } },
+      now: () => '2026-09-25T00:00:00.000Z',
+    });
+    try {
+      const result = await service.sync([conference('2330', '測試公司', '115/09/29 時間：10 點 0 分 (24小時制)')]);
+      expect(result).toMatchObject([{ status: 'failed', authorizationRequired: true }]);
+      expect(repositories.calendarSyncs.find(result[0].conferenceId!)).toMatchObject({ status: 'pending' });
     } finally { database.close(); }
   });
 

@@ -1,9 +1,10 @@
 import { classifyDisclosureResult, type DisclosureStatus } from '../domain/disclosure-state';
 import type { createRepositories } from '../repositories';
 import type { DefaultDisclosureResult } from '../providers/default-disclosures';
-import { buildDisclosureNotification } from './notification-messages';
+import { buildDisclosureNotification, buildSourceFailureNotification } from './notification-messages';
 import { deliverOutboxNotification, type NotificationChannel } from './notification-delivery';
 import { shouldDeliverNotification } from './notification-outbox';
+import { evaluateSourceHealth } from '../domain/source-health';
 
 type Repositories = ReturnType<typeof createRepositories>;
 type Provider = { fetchForDate(date: string): Promise<DefaultDisclosureResult> };
@@ -85,6 +86,18 @@ export function createDefaultDisclosureMonitor(dependencies: {
           : staleCount > 0 ? 'stale' : 'complete';
       const errorMessage = results.filter(({ errorMessage }) => errorMessage).map(({ market, errorMessage: message }) => `${market}: ${message}`).join('; ') || undefined;
       const checkedAt = now();
+      const sourceAlerts = results.flatMap(({ market, state, errorMessage: marketError }) => {
+        const current = state.status === 'empty_success' ? 'complete' : state.status;
+        const health = evaluateSourceHealth(dependencies.repositories.sourceChecks.history(market), current);
+        return health.notify ? [{
+          market,
+          health,
+          message: buildSourceFailureNotification({
+            source: market, consecutiveFailures: health.consecutiveFailures,
+            errorMessage: marketError ?? `來源狀態：${state.status}`,
+          }),
+        }] : [];
+      });
       const persisted = dependencies.repositories.transaction(() => {
         for (const { market, result, state, errorMessage: marketError } of results) {
           const sourceStatus = state.status === 'empty_success' ? 'complete' : state.status;
@@ -108,7 +121,7 @@ export function createDefaultDisclosureMonitor(dependencies: {
         const watchedCount = allRecords.filter(({ market, stockCode }) => dependencies.repositories.watchlist.isWatched(market, stockCode)).length;
         const watchedNames = allRecords.filter(({ market, stockCode }) => dependencies.repositories.watchlist.isWatched(market, stockCode))
           .map(({ companyName }) => companyName);
-        const notifyEmpty = dependencies.repositories.settings.get<boolean>('notifyEmptyDefaultDisclosures') === true
+        const notifyEmpty = dependencies.repositories.settings.get<boolean>('notifyEmptyDefaultDisclosures') !== false
           && results.every(({ state }) => state.status === 'empty_success');
         const notification = buildDisclosureNotification({ notifyEmpty, records: allRecords.map(({ companyName, market, stockCode }) => ({
           companyName: dependencies.repositories.watchlist.isWatched(market, stockCode) ? companyName : null,
@@ -117,19 +130,37 @@ export function createDefaultDisclosureMonitor(dependencies: {
         const intent = notification && dedupeKey ? dependencies.repositories.notificationOutbox.enqueue({
           jobRunId: job.id, dedupeKey, channel: 'windows-toast', payloadJson: JSON.stringify(notification), createdAt: checkedAt,
         }) : undefined;
+        const alertDeliveries = sourceAlerts.map(({ market, message }) => {
+          const alertKey = `source-health:${market}:${job.id}`;
+          const alertIntent = dependencies.repositories.notificationOutbox.enqueue({
+            jobRunId: job.id, dedupeKey: alertKey, channel: 'windows-toast',
+            payloadJson: JSON.stringify(message), createdAt: checkedAt,
+          });
+          return { alertKey, message, intent: alertIntent };
+        });
         dependencies.repositories.jobRuns.finish(job.id, {
           status, finishedAt: checkedAt,
           summary: { markets: states, recordCount: allRecords.length, watchedCount, watchedCompanies: watchedNames }, errorMessage,
         });
-        return { notification, dedupeKey, deliverNotification: intent ? shouldDeliverNotification(intent) : false };
+        return { notification, dedupeKey, deliverNotification: intent ? shouldDeliverNotification(intent) : false, alertDeliveries };
       });
 
-      let notificationStatus: 'sent' | 'failed' | 'quiet' = 'quiet';
+      const deliveryStatuses: Array<'sent' | 'failed'> = [];
       if (persisted.notification && persisted.dedupeKey && persisted.deliverNotification) {
-        notificationStatus = (await deliverOutboxNotification({ repositories: dependencies.repositories, channel: dependencies.channel, now }, {
+        const delivery = await deliverOutboxNotification({ repositories: dependencies.repositories, channel: dependencies.channel, now }, {
           jobRunId: job.id, dedupeKey: persisted.dedupeKey, channel: 'windows-toast', payload: persisted.notification,
-        })).status;
+        });
+        deliveryStatuses.push(delivery.status);
       }
+      for (const alert of persisted.alertDeliveries) {
+        if (!shouldDeliverNotification(alert.intent)) continue;
+        const delivery = await deliverOutboxNotification({ repositories: dependencies.repositories, channel: dependencies.channel, now }, {
+          jobRunId: job.id, dedupeKey: alert.alertKey, channel: 'windows-toast', payload: alert.message,
+        });
+        deliveryStatuses.push(delivery.status);
+      }
+      const notificationStatus: 'sent' | 'failed' | 'quiet' = deliveryStatuses.includes('sent') ? 'sent'
+        : deliveryStatuses.length ? 'failed' : 'quiet';
       return {
         jobRunId: job.id, status,
         markets: states,

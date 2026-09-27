@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import * as cheerio from 'cheerio';
 
 export interface MaterialSourceRecord {
-  source: 'mops' | 'twse' | 'tpex';
+  source: 'mops' | 'twse' | 'tpex' | 'twse-reconciliation' | 'tpex-reconciliation';
   market: 'TWSE' | 'TPEX';
   stockCode: string;
   companyName: string;
@@ -18,13 +18,14 @@ export interface MaterialProviderResult {
   status: 'complete' | 'degraded';
   dataDate: string;
   events: MaterialSourceRecord[];
+  warning?: string;
 }
 
 export interface HttpClientPort {
   get(url: string): Promise<unknown>;
 }
 
-function parseTaipeiInstant(rocDate: string, time: string): { iso: string; compactDate: string; compactTime: string } {
+export function parseTaipeiInstant(rocDate: string, time: string): { iso: string; compactDate: string; compactTime: string } {
   const dateMatch = /^(\d{2,3})\/(\d{1,2})\/(\d{1,2})$/.exec(rocDate.trim());
   const timeMatch = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(time.trim());
   if (!dateMatch || !timeMatch) throw new Error('重大訊息日期或時間格式無效');
@@ -57,6 +58,9 @@ function headerIndex(headers: string[], candidates: readonly string[], label: st
 
 export function parseMopsMaterialHtml(html: string, baseUrl = 'https://mops.twse.com.tw'): MaterialSourceRecord[] {
   const $ = cheerio.load(html);
+  if (/因為安全性考量|FOR SECURITY REASONS, THIS PAGE CAN NOT BE ACCESSED/i.test($.root().text())) {
+    throw new Error('MOPS 因安全性限制拒絕此來源請求，無法確認當日重大訊息');
+  }
   const table = $('#table01').length ? $('#table01').first() : $('table').first();
   if (table.length === 0) throw new Error('重大訊息表格不存在，不能視為零筆成功');
 

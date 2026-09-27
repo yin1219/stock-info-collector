@@ -49,9 +49,56 @@ test('windows-distribution / installer / configures Squirrel per-user setup and 
   assert.match(packageJson.devDependencies['@electron-forge/maker-squirrel'], /^7\.11\.2$/);
 });
 
+test('windows-distribution / upgrade / advances beyond the installed 1.0.0 release with matching lockfile metadata', async () => {
+  const packageJson = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
+  const lock = JSON.parse(await readFile(path.join(root, 'package-lock.json'), 'utf8'));
+  assert.notEqual(packageJson.version, '1.0.0');
+  assert.equal(lock.version, packageJson.version);
+  assert.equal(lock.packages[''].version, packageJson.version);
+});
+
+test('material-event-monitoring / live source / uses dated MOPS website search as a degraded source', async () => {
+  const main = await readFile(path.join(root, 'src/main/main.ts'), 'utf8');
+  assert.match(main, /primary:\s*createMopsSearchMaterialProvider\(http\)/);
+  assert.match(main, /async post\(url: string, body: string\)/);
+});
+
+test('windows-distribution / installer / embeds the application icon in Forge output', async () => {
+  const forge = await readFile(path.join(root, 'forge.config.ts'), 'utf8');
+  await access(path.join(root, 'assets', 'app-icon.ico'));
+  assert.match(forge, /icon:\s*['"]assets\/app-icon['"]/);
+  assert.match(forge, /setupIcon:\s*['"]assets\/app-icon\.ico['"]/);
+});
+
+test('desktop-app-lifecycle / isolated test mode / does not keep an operating-system tray alive', async () => {
+  const main = await readFile(path.join(root, 'src/main/main.ts'), 'utf8');
+  assert.match(main, /process\.env\.REPORTER_USER_DATA_DIR\s*&&\s*process\.env\.REPORTER_TEST_TRAY\s*===\s*'1'/);
+  assert.match(main, /if \(!process\.env\.REPORTER_USER_DATA_DIR\s*\|\|\s*enableIsolatedTrayHarness\)[\s\S]*new ElectronTray/);
+});
+
+test('test infrastructure / Electron E2E / rebuilds the isolated Forge Vite shell before launch', async () => {
+  const packageJson = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
+  await access(path.join(root, 'scripts', 'build-e2e-shell.cjs'));
+  assert.match(packageJson.scripts['test:e2e'], /build-e2e-shell\.cjs.*playwright test/);
+});
+
 test('desktop-app-lifecycle / native modules / leaves better-sqlite3 loadable from packaged node_modules', async () => {
   const config = await readFile(path.join(root, 'vite.main.config.mts'), 'utf8');
+  const forge = await readFile(path.join(root, 'forge.config.ts'), 'utf8');
+  const packageJson = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
   assert.match(config, /external:\s*\[[^\]]*better-sqlite3/s);
+  assert.match(forge, /node_modules/);
+  assert.match(forge, /AutoUnpackNativesPlugin/);
+  assert.equal(packageJson.devDependencies['@electron-forge/plugin-auto-unpack-natives'], '7.11.2');
+});
+
+test('windows-distribution / installer / packages only the native dependency left external by Vite', async () => {
+  const createJiti = require('jiti');
+  const forge = (await createJiti(__filename).import(path.join(root, 'forge.config.ts'))).default;
+  const ignored = forge.packagerConfig.ignore;
+  assert.equal(ignored(path.join(root, 'node_modules', 'better-sqlite3', 'lib', 'index.js')), false);
+  assert.equal(ignored(path.join(root, 'node_modules', 'googleapis', 'build', 'src', 'index.js')), true);
+  assert.equal(ignored(path.join(root, 'node_modules', 'axios', 'index.js')), true);
 });
 
 test('renderer architecture / has domain, provider, repository and service boundaries without privileged imports', async () => {

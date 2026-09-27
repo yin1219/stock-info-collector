@@ -9,6 +9,27 @@ describe('scheduler lifecycle bootstrap', () => {
     expect(lifecycle).toBeUndefined();
   });
 
+  it('allows an explicitly opted-in isolated scheduler to run manually without startup, polling or resume work', async () => {
+    const tick = vi.fn().mockResolvedValue([]);
+    const runNow = vi.fn().mockResolvedValue({ status: 'started' });
+    const on = vi.fn();
+    const interval = vi.fn();
+    const lifecycle = startSchedulerLifecycle({
+      isolated: true,
+      manualOnly: true,
+      createScheduler: () => ({ tick, catchUp: tick, runNow }),
+      powerMonitor: { on, removeListener: vi.fn() },
+      setInterval: interval,
+      clearInterval: vi.fn(),
+    });
+    expect(lifecycle?.scheduler).toBeDefined();
+    expect(tick).not.toHaveBeenCalled();
+    expect(interval).not.toHaveBeenCalled();
+    expect(on).not.toHaveBeenCalled();
+    await expect(lifecycle!.scheduler.runNow?.('material')).resolves.toEqual({ status: 'started' });
+    lifecycle?.stop();
+  });
+
   it('checks on startup and resume, polls, and removes timer/listener on stop', async () => {
     const tick = vi.fn().mockResolvedValue([]);
     const on = vi.fn();

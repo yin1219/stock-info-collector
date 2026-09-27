@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { isDailyJobDue, isMonitoringDue, type MonitoringSchedule } from '../domain/schedule';
 
 type JobKind = 'material' | 'disclosure';
@@ -63,9 +64,16 @@ export function createMonitoringScheduler(dependencies: {
   return {
     tick,
     catchUp: tick,
+    updateSettings(settings: {
+      monitoring: { enabled: boolean; start: string; end: string; intervalMinutes: 15 | 30 | 60 | 120 };
+      disclosure: { enabled: boolean; runAt: string };
+    }): void {
+      Object.assign(dependencies.monitoring, settings.monitoring);
+      Object.assign(dependencies.disclosure, settings.disclosure);
+    },
     runNow(kind: JobKind): Promise<ScheduledRun> {
-      const { date, minute } = taipeiDateAndMinute(dependencies.now());
-      return run(kind, `${kind}:${date}:manual:${minute}`);
+      const { date } = taipeiDateAndMinute(dependencies.now());
+      return run(kind, `${kind}:${date}:manual:${randomUUID()}`);
     },
     isRunning(kind: JobKind): boolean { return active.has(kind); },
   };

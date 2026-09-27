@@ -27,6 +27,31 @@ const event = (market: 'TWSE' | 'TPEX', stockCode: string, sourceKey: string) =>
 });
 
 describe('material-event-monitoring / persistence and job integration', () => {
+  it('does not duplicate or re-notify an announcement already saved by daily reconciliation when MOPS catches up', async () => {
+    const { database, repositories, now } = await setup();
+    const company = repositories.companies.findByStockCode('2330', 'TWSE')!;
+    repositories.materialEvents.upsert({
+      companyId: company.id, sourceKey: 'twse:earlier-reconciliation', contentFingerprint: 'earlier-fingerprint',
+      title: '公告2330', content: '完整對帳內容2330', publishedAt: '2026-09-26T09:29:56.000Z', revisionOf: null,
+      source: 'twse-reconciliation', sourceUrl: 'https://mops.twse.com.tw/mops/web/t05sr01_1?stock=2330',
+      discoveredAt: now, eventType: 'announcement',
+    });
+    let notifications = 0;
+    const monitor = createMaterialMonitor({
+      repositories,
+      primary: { async fetchForDate(): Promise<MaterialProviderResult> { return {
+        status: 'degraded', dataDate: '2026-09-26', events: [event('TWSE', '2330', 'mops:later-catch-up')],
+      }; } },
+      channel: { async send() { notifications += 1; } }, now: () => now,
+    });
+    try {
+      const run = await monitor.run({ targetDate: '2026-09-26', idempotencyKey: 'material:after-reconciliation' });
+      expect(run.newEventIds).toEqual([]);
+      expect(repositories.materialEvents.count()).toBe(1);
+      expect(notifications).toBe(0);
+    } finally { database.close(); }
+  });
+
   it('persists source rows but queues and delivers only new events from active watched companies', async () => {
     const { database, repositories } = await setup();
     const deliveries: unknown[] = [];
@@ -99,7 +124,7 @@ describe('material-event-monitoring / persistence and job integration', () => {
     const { database, repositories } = await setup();
     const degraded = createMaterialMonitor({
       repositories,
-      primary: { async fetchForDate(): Promise<MaterialProviderResult> { return { status: 'degraded', dataDate: '2026-09-26', events: [] }; } },
+      primary: { async fetchForDate(): Promise<MaterialProviderResult> { return { status: 'degraded', dataDate: '2026-09-26', events: [], warning: '公告快易查可能漏筆' }; } },
       fallback: { async fetchForDate() { throw 'rss unavailable'; } },
       channel: { async send() {} }, now: () => '2026-09-26T10:00:00.000Z',
     });
@@ -113,6 +138,7 @@ describe('material-event-monitoring / persistence and job integration', () => {
       const degradedRun = await degraded.run({ targetDate: '2026-09-26', idempotencyKey: 'material:primary-degraded' });
       const staleRun = await stale.run({ targetDate: '2026-09-26', idempotencyKey: 'material:stale-fallback-failed' });
       expect(degradedRun.status).toBe('degraded');
+      expect(repositories.sourceChecks.find(degradedRun.jobRunId, 'MOPS')).toMatchObject({ status: 'degraded', errorMessage: '公告快易查可能漏筆' });
       expect(staleRun.status).toBe('stale');
       expect(repositories.sourceChecks.find(staleRun.jobRunId, 'MOPS-RSS')).toMatchObject({ status: 'failed', errorMessage: 'rss still old' });
     } finally { database.close(); }
@@ -175,6 +201,28 @@ describe('material-event-monitoring / persistence and job integration', () => {
       expect(repositories.jobRuns.find(staleRun.jobRunId)?.status).toBe('stale');
       expect(repositories.jobRuns.find(failedRun.jobRunId)?.errorMessage).toContain('source unavailable');
       expect(repositories.notificationOutbox.count()).toBe(0);
+    } finally { database.close(); }
+  });
+
+  it('notifies once when a required material source reaches its third consecutive failure', async () => {
+    const { database, repositories } = await setup();
+    const notifications: unknown[] = [];
+    const monitor = createMaterialMonitor({
+      repositories,
+      primary: { async fetchForDate() { throw new Error('MOPS fixture unavailable'); } },
+      channel: { async send(message) { notifications.push(message); } },
+      now: () => '2026-09-26T10:00:00.000Z',
+    });
+    try {
+      const first = await monitor.run({ targetDate: '2026-09-26', idempotencyKey: 'health:first' });
+      const second = await monitor.run({ targetDate: '2026-09-26', idempotencyKey: 'health:second' });
+      expect(first.notificationStatus).toBe('quiet');
+      expect(second.notificationStatus).toBe('quiet');
+      expect(notifications).toHaveLength(0);
+      const third = await monitor.run({ targetDate: '2026-09-26', idempotencyKey: 'health:third' });
+      expect(third.notificationStatus).toBe('sent');
+      expect(notifications).toMatchObject([{ title: '資料來源異常', body: expect.stringContaining('連續 3 次'), route: { type: 'source-status' } }]);
+      expect(repositories.notificationOutbox.count()).toBe(1);
     } finally { database.close(); }
   });
 });

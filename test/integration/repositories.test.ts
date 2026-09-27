@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { spawnSync } from 'node:child_process';
 import { createTestPaths } from '../support';
 import { openDatabase } from '../../src/repositories/migrations';
 import { createRepositories } from '../../src/repositories';
@@ -17,6 +18,30 @@ async function openRepositories() {
 }
 
 describe('local-data-management / domain repositories', () => {
+  it('local-data-management / persistence / reopens committed data after restart', async () => {
+    const paths = await createTestPaths();
+    cleanups.push(paths.cleanup);
+    const initialized = openDatabase(paths.database);
+    initialized.close();
+
+    const crashWriter = [
+      "const Database = require('better-sqlite3');",
+      'const database = new Database(process.argv[1]);',
+      "database.prepare('INSERT INTO settings (key, value_json, updated_at) VALUES (?, ?, ?)').run('crash-check', '{\"persisted\":true}', '2026-09-26T10:00:00.000Z');",
+      'process.exit(0);',
+    ].join('\n');
+    const child = spawnSync(process.execPath, ['-e', crashWriter, paths.database], { encoding: 'utf8' });
+    expect(child.status, child.stderr).toBe(0);
+
+    const restarted = openDatabase(paths.database);
+    try {
+      const repositories = createRepositories(restarted);
+      expect(repositories.settings.get('crash-check')).toEqual({ persisted: true });
+    } finally {
+      restarted.close();
+    }
+  });
+
   it('lists material events with source details and persists read state without dropping history', async () => {
     const { database, repositories } = await openRepositories();
     const now = '2026-09-26T09:30:00.000Z';
@@ -43,6 +68,26 @@ describe('local-data-management / domain repositories', () => {
     } finally {
       database.close();
     }
+  });
+
+  it('lists active watched company announcements by default scope without deleting other saved announcements', async () => {
+    const { database, repositories } = await openRepositories();
+    const now = '2026-09-26T09:30:00.000Z';
+    try {
+      const watched = repositories.companies.upsert({ market: 'TWSE', stockCode: '2330', name: '關注公司', updatedAt: now });
+      const other = repositories.companies.upsert({ market: 'TPEX', stockCode: '6488', name: '其他公司', updatedAt: now });
+      repositories.watchlist.upsert({ companyId: watched.id, active: true, category: '', notes: '', createdAt: now, updatedAt: now });
+      repositories.watchlist.upsert({ companyId: other.id, active: false, category: '', notes: '', createdAt: now, updatedAt: now });
+      for (const [companyId, sourceKey] of [[watched.id, 'mops:watched'], [other.id, 'mops:other']]) {
+        repositories.materialEvents.upsert({ companyId, sourceKey, contentFingerprint: sourceKey,
+          title: '重大公告', content: '完整內容', publishedAt: now });
+      }
+      expect(repositories.materialEvents.list({ watchedOnly: true }).map(({ stockCode }) => stockCode)).toEqual(['2330']);
+      expect(repositories.materialEvents.list().map(({ stockCode }) => stockCode)).toHaveLength(2);
+      repositories.watchlist.remove(watched.id);
+      expect(repositories.materialEvents.list({ watchedOnly: true })).toEqual([]);
+      expect(repositories.materialEvents.count()).toBe(2);
+    } finally { database.close(); }
   });
 
   it('transactionally upserts each domain record and returns the committed state', async () => {
@@ -73,6 +118,7 @@ describe('local-data-management / domain repositories', () => {
         expect(repositories.jobRuns.start({ kind: 'material-event-monitoring', idempotencyKey: 'material:2026-09-26T00', startedAt: now })).toEqual({ ...job, created: false });
         const sourceCheck = repositories.sourceChecks.upsert({ jobRunId: job.id, source: 'MOPS', status: 'complete', dataDate: '2026-09-26', recordCount: 1, checkedAt: now });
         expect(repositories.sourceChecks.find(job.id, 'MOPS')?.id).toBe(sourceCheck.id);
+        expect(repositories.sourceChecks.list(job.id)).toMatchObject([{ source: 'MOPS', status: 'complete' }]);
 
         const notice = repositories.notificationOutbox.enqueue({ jobRunId: job.id, eventId: event.id, dedupeKey: 'notify:mops:evt:1', channel: 'windows-toast', payloadJson: '{"eventId":"evt-1"}', createdAt: now });
         expect(repositories.notificationOutbox.enqueue({ jobRunId: job.id, eventId: event.id, dedupeKey: 'notify:mops:evt:1', channel: 'windows-toast', payloadJson: '{}', createdAt: now }).id).toBe(notice.id);

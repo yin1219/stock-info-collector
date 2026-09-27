@@ -66,6 +66,24 @@ describe('default-disclosure-monitoring / cross-market persistence and job integ
     } finally { database.close(); }
   });
 
+  it('reports stale when both official markets have not published the target date yet', async () => {
+    const { database, repositories } = await setup();
+    const monitor = createDefaultDisclosureMonitor({
+      repositories,
+      providers: {
+        TWSE: { async fetchForDate() { return result('TWSE', '2330', '2026-09-25'); } },
+        TPEX: { async fetchForDate() { return { market: 'TPEX', dataDate: '2026-09-25', records: [] }; } },
+      },
+      channel: { async send() { throw new Error('stale results must remain quiet'); } }, now: () => '2026-09-26T10:30:00.000Z',
+    });
+    try {
+      const run = await monitor.run({ targetDate: '2026-09-26', idempotencyKey: 'disclosure:both-stale' });
+      expect(run.status).toBe('stale');
+      expect(run.markets).toMatchObject({ TWSE: { status: 'stale' }, TPEX: { status: 'stale' } });
+      expect(run.notificationStatus).toBe('quiet');
+    } finally { database.close(); }
+  });
+
   it('does not refetch or redeliver a daily job whose idempotency key already completed', async () => {
     const { database, repositories } = await setup();
     let providerCalls = 0;
@@ -88,7 +106,7 @@ describe('default-disclosure-monitoring / cross-market persistence and job integ
     } finally { database.close(); }
   });
 
-  it('notifies for current-day empty results only after the user explicitly enables the setting', async () => {
+  it('notifies for current-day empty results when the user explicitly enables the setting', async () => {
     const { database, repositories, now } = await setup();
     repositories.settings.set('notifyEmptyDefaultDisclosures', true, now);
     const messages: unknown[] = [];
@@ -103,6 +121,41 @@ describe('default-disclosure-monitoring / cross-market persistence and job integ
     try {
       const run = await monitor.run({ targetDate: '2026-09-26', idempotencyKey: 'disclosure:empty-enabled' });
       expect(run.status).toBe('complete');
+      expect(run.notificationStatus).toBe('sent');
+      expect(messages).toMatchObject([{ body: '本日無違約交割揭露' }]);
+    } finally { database.close(); }
+  });
+
+  it('keeps current-day empty results quiet when the user opts out', async () => {
+    const { database, repositories, now } = await setup();
+    repositories.settings.set('notifyEmptyDefaultDisclosures', false, now);
+    const monitor = createDefaultDisclosureMonitor({
+      repositories,
+      providers: {
+        TWSE: { async fetchForDate() { return { market: 'TWSE', dataDate: '2026-09-26', records: [] }; } },
+        TPEX: { async fetchForDate() { return { market: 'TPEX', dataDate: '2026-09-26', records: [] }; } },
+      },
+      channel: { async send() { throw new Error('opt-out must stay quiet'); } }, now: () => now,
+    });
+    try {
+      const run = await monitor.run({ targetDate: '2026-09-26', idempotencyKey: 'disclosure:empty-disabled' });
+      expect(run.notificationStatus).toBe('quiet');
+    } finally { database.close(); }
+  });
+
+  it('notifies for current-day empty results by default unless the user opts out', async () => {
+    const { database, repositories } = await setup();
+    const messages: unknown[] = [];
+    const monitor = createDefaultDisclosureMonitor({
+      repositories,
+      providers: {
+        TWSE: { async fetchForDate() { return { market: 'TWSE', dataDate: '2026-09-26', records: [] }; } },
+        TPEX: { async fetchForDate() { return { market: 'TPEX', dataDate: '2026-09-26', records: [] }; } },
+      },
+      channel: { async send(message) { messages.push(message); } }, now: () => '2026-09-26T10:00:00.000Z',
+    });
+    try {
+      const run = await monitor.run({ targetDate: '2026-09-26', idempotencyKey: 'disclosure:empty-default' });
       expect(run.notificationStatus).toBe('sent');
       expect(messages).toMatchObject([{ body: '本日無違約交割揭露' }]);
     } finally { database.close(); }
@@ -124,6 +177,31 @@ describe('default-disclosure-monitoring / cross-market persistence and job integ
       expect(run.markets.TWSE.status).toBe('failed');
       expect(run.markets.TPEX.status).toBe('failed');
       expect(run.errorMessage).toContain('TPEX request rejected');
+    } finally { database.close(); }
+  });
+
+  it('alerts once after a required market source has three incomplete checks', async () => {
+    const { database, repositories, now } = await setup();
+    repositories.settings.set('notifyEmptyDefaultDisclosures', false, now);
+    const notifications: Array<{ title: string; body: string }> = [];
+    const monitor = createDefaultDisclosureMonitor({
+      repositories,
+      providers: {
+        TWSE: { async fetchForDate() { throw new Error('TWSE fixture unavailable'); } },
+        TPEX: { async fetchForDate() { return { market: 'TPEX', dataDate: '2026-09-26', records: [] }; } },
+      },
+      channel: { async send(message) { notifications.push(message); } }, now: () => now,
+    });
+    try {
+      const first = await monitor.run({ targetDate: '2026-09-26', idempotencyKey: 'health:twse:first' });
+      const second = await monitor.run({ targetDate: '2026-09-26', idempotencyKey: 'health:twse:second' });
+      expect(first.notificationStatus).toBe('quiet');
+      expect(second.notificationStatus).toBe('quiet');
+      expect(notifications).toHaveLength(0);
+      const third = await monitor.run({ targetDate: '2026-09-26', idempotencyKey: 'health:twse:third' });
+      expect(third.notificationStatus).toBe('sent');
+      expect(notifications).toMatchObject([{ title: '資料來源異常', body: expect.stringContaining('TWSE 連續 3 次') }]);
+      expect(repositories.notificationOutbox.count()).toBe(1);
     } finally { database.close(); }
   });
 

@@ -16,10 +16,20 @@ describe('security architecture / preload exposes narrow typed watchlist APIs', 
     await api.removeWatchlist({ companyId: 'co-1' });
     await api.previewWatchlistImport('{"StockNumbers":"2330"}');
     await api.applyWatchlistImport('{"StockNumbers":"2330"}');
+    await api.getGoogleCalendarStatus();
+    await api.importGoogleCredentials();
+    await api.migrateLegacyGoogleToken();
+    await api.connectGoogleCalendar();
+    await api.listConferences();
+    await api.syncConferences();
+    await api.disconnectGoogleCalendar();
+    await api.exportUserData();
 
     expect(calls.map(({ channel }) => channel)).toEqual([
       'watchlist:list', 'watchlist:add', 'watchlist:update', 'watchlist:set-active',
       'watchlist:remove', 'watchlist:import-preview', 'watchlist:import-apply',
+      'calendar:get-status', 'calendar:import-credentials', 'calendar:migrate-legacy-token', 'calendar:connect', 'calendar:list', 'calendar:sync', 'calendar:disconnect',
+      'data:export',
     ]);
     expect('invoke' in api).toBe(false);
     expect('readFile' in api).toBe(false);

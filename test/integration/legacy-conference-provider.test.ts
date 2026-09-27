@@ -16,6 +16,7 @@ describe('conference-calendar-sync / provider contract / migrates the legacy MOP
     const provider = createLegacyConferenceProvider(http, { redirectEndpoint: 'fixture://mops/redirect' });
     await expect(provider.fetch(['2454'])).resolves.toEqual([expect.objectContaining({
       CompId: '2454', CompName: '聯發科技股份有限公司', Location: '線上法人說明會',
+      SourceUrl: 'https://mops.twse.com.tw/mops/web/t100sb07_1?co_id=2454',
     })]);
     expect(calls).toEqual([
       { method: 'POST', url: 'fixture://mops/redirect', body: { apiName: 'ajax_t100sb07_1', parameters: { co_id: '2454', encodeURIComponent: 1, step: 1, firstin: 1, off: 1, TYPEK: 'all' } } },

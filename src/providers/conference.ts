@@ -57,9 +57,10 @@ export function createLegacyConferenceProvider(
           apiName: 'ajax_t100sb07_1',
           parameters: { co_id: stockCode, encodeURIComponent: 1, step: 1, firstin: 1, off: 1, TYPEK: 'all' },
         });
-        const html = htmlOf(await http.get(parseRedirect(redirect)));
+        const sourceUrl = parseRedirect(redirect);
+        const html = htmlOf(await http.get(sourceUrl));
         const conference = parseConferenceHtml(html);
-        if (conference) conferences.push(conference);
+        if (conference) conferences.push({ ...conference, SourceUrl: sourceUrl });
       }
       return conferences;
     },

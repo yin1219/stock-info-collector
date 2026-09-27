@@ -37,6 +37,11 @@ describe('material-event-monitoring / provider contract / parses official daily 
   it('rejects a structurally invalid response instead of reporting a false empty success', () => {
     expect(() => parseMopsMaterialHtml('<html><body><p>維護中</p></body></html>')).toThrow(/重大訊息表格/);
   });
+
+  it('identifies the official security block page instead of claiming the table is empty', () => {
+    expect(() => parseMopsMaterialHtml('<html><body>因為安全性考量，您所執行的頁面無法呈現。FOR SECURITY REASONS, THIS PAGE CAN NOT BE ACCESSED.</body></html>'))
+      .toThrow(/MOPS.*安全性限制/);
+  });
 });
 
 describe('material-event-monitoring / provider contract / uses a fake HTTP transport', () => {

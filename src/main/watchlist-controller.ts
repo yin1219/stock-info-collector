@@ -38,7 +38,7 @@ export function createWatchlistController(dependencies: {
       return setWatchlistCompanyActive(repositories.watchlist, input.companyId, input.active, now());
     },
     remove(input: { companyId: string }) {
-      return removeWatchlistCompany(repositories.watchlist, input.companyId, now());
+      return removeWatchlistCompany(repositories.watchlist, input.companyId);
     },
     previewImport(input: { configText: string }) {
       return previewLegacyWatchlistImport(input.configText, {

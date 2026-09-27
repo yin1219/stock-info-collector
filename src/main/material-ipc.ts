@@ -4,9 +4,10 @@ export interface MaterialIpcPort {
 }
 
 export interface MaterialReadService {
-  list(filter: { query?: string; unreadOnly?: boolean; eventIds?: string[] }): unknown;
+  list(filter: { query?: string; unreadOnly?: boolean; watchedOnly?: boolean; eventIds?: string[] }): unknown;
   detail(id: string): unknown;
   markRead(id: string): unknown;
+  monitorStatus(): unknown;
 }
 
 export function registerMaterialIpc(
@@ -20,6 +21,7 @@ export function registerMaterialIpc(
       const value = (payload ?? {}) as Record<string, unknown>;
       if (value.query !== undefined && typeof value.query !== 'string') throw new Error('重大訊息查詢條件格式無效');
       if (value.unreadOnly !== undefined && typeof value.unreadOnly !== 'boolean') throw new Error('重大訊息查詢條件格式無效');
+      if (value.watchedOnly !== undefined && typeof value.watchedOnly !== 'boolean') throw new Error('重大訊息查詢條件格式無效');
       if (value.eventIds !== undefined && (!Array.isArray(value.eventIds) || value.eventIds.length === 0 || value.eventIds.length > 100
         || !value.eventIds.every((id) => typeof id === 'string' && /^[A-Za-z0-9-]{1,80}$/.test(id)))) {
         throw new Error('重大訊息查詢條件格式無效');
@@ -27,11 +29,13 @@ export function registerMaterialIpc(
       return service.list({
         ...(typeof value.query === 'string' && value.query.trim() ? { query: value.query.trim().slice(0, 120) } : {}),
         ...(typeof value.unreadOnly === 'boolean' ? { unreadOnly: value.unreadOnly } : {}),
+        ...(typeof value.watchedOnly === 'boolean' ? { watchedOnly: value.watchedOnly } : {}),
         ...(Array.isArray(value.eventIds) ? { eventIds: value.eventIds as string[] } : {}),
       });
     }],
     ['material-events:detail', (payload) => service.detail(readId(payload))],
     ['material-events:mark-read', (payload) => service.markRead(readId(payload))],
+    ['material-events:status', () => service.monitorStatus()],
   ];
   for (const [channel, handler] of routes) {
     ipcMain.handle(channel, (event, payload) => {

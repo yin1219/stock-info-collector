@@ -4,6 +4,8 @@ import type { MaterialProviderResult, MaterialSourceRecord } from '../providers/
 import { buildMaterialNotification } from './notification-messages';
 import { deliverOutboxNotification, type NotificationChannel } from './notification-delivery';
 import { shouldDeliverNotification } from './notification-outbox';
+import { evaluateSourceHealth } from '../domain/source-health';
+import { buildSourceFailureNotification } from './notification-messages';
 
 type Repositories = ReturnType<typeof createRepositories>;
 type Provider = { fetchForDate(date: string): Promise<MaterialProviderResult> };
@@ -82,12 +84,17 @@ export function createMaterialMonitor(dependencies: {
       const selectedSource = fallbackUsable ? 'MOPS-RSS' : 'MOPS';
       const records = selected?.events ?? [];
       const checkedAt = now();
+      const sourceHealth = evaluateSourceHealth(dependencies.repositories.sourceChecks.history('MOPS'), primaryStatus);
+      const sourceAlert = sourceHealth.notify ? buildSourceFailureNotification({
+        source: 'MOPS', consecutiveFailures: sourceHealth.consecutiveFailures,
+        errorMessage: primaryError ?? (primaryStatus === 'complete' ? null : `來源狀態：${primaryStatus}`),
+      }) : null;
       const activeWatchlist = dependencies.repositories.watchlist.list({ activeOnly: true });
       const activeByKey = new Map(activeWatchlist.map((entry) => [`${entry.market}:${entry.stockCode}`, entry]));
       const persisted = dependencies.repositories.transaction(() => {
         dependencies.repositories.sourceChecks.upsert({
           jobRunId: job.id, source: 'MOPS', status: primaryStatus, dataDate: primaryResult?.dataDate ?? null,
-          recordCount: primaryResult?.events.length ?? 0, checkedAt, errorMessage: primaryError ?? (primaryResult && primaryStatus === 'failed' ? 'MOPS 資料日期無效' : null),
+          recordCount: primaryResult?.events.length ?? 0, checkedAt, errorMessage: primaryError ?? primaryResult?.warning ?? (primaryResult && primaryStatus === 'failed' ? 'MOPS 資料日期無效' : null),
         });
         if (dependencies.fallback && fallbackStatus) {
           dependencies.repositories.sourceChecks.upsert({
@@ -102,6 +109,8 @@ export function createMaterialMonitor(dependencies: {
           const company = dependencies.repositories.companies.upsert({
             market: record.market, stockCode: record.stockCode, name: record.companyName, updatedAt: checkedAt,
           });
+          const nearby = dependencies.repositories.materialEvents.findNearbyAnnouncement(company.id, record.title, record.publishedAt);
+          if (nearby?.source === `${record.market.toLowerCase()}-reconciliation`) continue;
           const original = dependencies.repositories.materialEvents.findBySourceKey(record.sourceKey);
           let prepared = prepareMaterialEvent(record, original ? [original] : []);
           if (prepared.kind === 'revision') {
@@ -135,15 +144,20 @@ export function createMaterialMonitor(dependencies: {
           });
           deliverNotification = shouldDeliverNotification(intent);
         }
+        const sourceAlertDedupeKey = sourceAlert ? `source-health:MOPS:${job.id}` : undefined;
+        const sourceAlertIntent = sourceAlert && sourceAlertDedupeKey ? dependencies.repositories.notificationOutbox.enqueue({
+          jobRunId: job.id, dedupeKey: sourceAlertDedupeKey, channel: 'windows-toast',
+          payloadJson: JSON.stringify(sourceAlert), createdAt: checkedAt,
+        }) : undefined;
         dependencies.repositories.jobRuns.finish(job.id, {
           status: finalStatus, finishedAt: checkedAt,
           summary: { source: selectedSource, dataDate: selected?.dataDate ?? null, events: records.length, newEvents: newEventIds.length },
           errorMessage,
         });
-        return { newEventIds, notification, notificationDedupeKey, deliverNotification };
+        return { newEventIds, notification, notificationDedupeKey, deliverNotification, sourceAlertIntent, sourceAlertDedupeKey };
       });
 
-      let notificationStatus: 'sent' | 'failed' | 'quiet' = 'quiet';
+      const deliveryStatuses: Array<'sent' | 'failed'> = [];
       if (persisted.notification && persisted.notificationDedupeKey && persisted.deliverNotification) {
         const delivery = await deliverOutboxNotification({
           repositories: dependencies.repositories,
@@ -153,8 +167,16 @@ export function createMaterialMonitor(dependencies: {
           jobRunId: job.id, dedupeKey: persisted.notificationDedupeKey,
           channel: 'windows-toast', payload: persisted.notification,
         });
-        notificationStatus = delivery.status;
+        deliveryStatuses.push(delivery.status);
       }
+      if (sourceAlert && persisted.sourceAlertIntent && persisted.sourceAlertDedupeKey && shouldDeliverNotification(persisted.sourceAlertIntent)) {
+        const delivery = await deliverOutboxNotification({ repositories: dependencies.repositories, channel: dependencies.channel, now }, {
+          jobRunId: job.id, dedupeKey: persisted.sourceAlertDedupeKey, channel: 'windows-toast', payload: sourceAlert,
+        });
+        deliveryStatuses.push(delivery.status);
+      }
+      const notificationStatus: 'sent' | 'failed' | 'quiet' = deliveryStatuses.includes('sent') ? 'sent'
+        : deliveryStatuses.length ? 'failed' : 'quiet';
       return { jobRunId: job.id, status: finalStatus, newEventIds: persisted.newEventIds, notificationStatus, ...(errorMessage ? { errorMessage } : {}) };
     },
   };

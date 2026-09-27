@@ -36,7 +36,8 @@
 - `token.json`、`token_bak.json` 或其他 token 備份：Google 使用者授權資訊。
 - `Log/`：執行紀錄。
 - v2 Electron userData：SQLite、加密 OAuth token 與診斷紀錄；診斷紀錄位於 `logs/application.log`，token 檔為 `oauth-token.enc`。應用程式 userData 以 `app.getPath('userData')` 為準，不可用正式 userData 執行標準測試。
-- v2 SQLite migration 前備份：資料庫旁的 `.pre-v2.backup`；不要手動清理或覆寫，除非已確認另一份可復原備份。
+- v2 使用者匯出：由「設定」頁觸發系統另存對話框，匯出版本化 JSON；敏感 OAuth 設定與 token 需排除，匯出檔不可覆寫既有檔案。每日違約揭露的「本日無揭露」通知可於「設定」頁關閉，預設啟用。
+- v2 SQLite migration 前備份：資料庫旁的 `.pre-v<版本>.backup`（例如 v4 為 `.pre-v4.backup`）；不要手動清理或覆寫，除非已確認另一份可復原備份。
 - `dist/`、`stock-info-collector/`、壓縮檔與 `.exe`：建置或部署產物。
 
 ## 核心流程與不可意外改變的行為
@@ -89,18 +90,23 @@ node --check index.js
 # 正式執行一次（會存取外部服務並可能新增 Calendar 事件）
 node index.js
 
-# 需先讓 pkg CLI 可用；輸出 Windows x64 執行檔
+# v2：Electron Forge package；Windows installer 請用 npm run make
 npm run build
+npm run make
 ```
 
-`npm test` 是 v2 完整測試入口，包含 Electron E2E；E2E 使用獨立暫存 userData，並有測試專用 Chromium `--no-sandbox` override；絕不可將該開關用於正式 app。`npm run coverage` 執行 unit/integration 與品質門檻。`npm run build` 僅 package；`npm run make` 產出 Windows Squirrel installer。正式模式 renderer 在目前 Windows 環境曾記錄 `launch-failed` 與平台退出碼 49，尚未完成正式安裝啟動驗收。`npm run deploy` 是 v1 舊指令，仍不可用。
+`npm test` 是 v2 完整測試入口，包含 Electron E2E；E2E 使用獨立暫存 userData，並有測試專用 Chromium `--no-sandbox` override；絕不可將該開關用於正式 app。僅 E2E tray harness 可在同時指定 `REPORTER_USER_DATA_DIR` 與 `REPORTER_TEST_TRAY=1` 時建立暫時系統匣圖示和顯示視窗；隔離模式仍停用 scheduler，且絕不可在正式啟動設定此測試旗標。`npm run coverage` 執行 unit/integration 與品質門檻。`npm run build` 是 Forge package；`npm run make` 產出 Windows Squirrel installer。目前 Windows profile 的 per-user 首次安裝、捷徑、無 Node／管理員權限啟動、1.0.1→1.0.2 覆蓋升級資料保留及移除政策已有隔離測試資料驗收；乾淨 profile 安裝已由使用者移出驗收要求。`npm run deploy` 是 v1 舊指令，仍不可用。
 
 ## v2 執行狀態與驗收界線
 
-- v2 scheduler、MOPS/TWSE/TPEX providers、SQLite monitors、notification outbox/channel 與部分 React UI 已有離線測試。正式模式於啟動／resume／每分鐘檢查排程；`REPORTER_USER_DATA_DIR` 存在時 scheduler 必須保持停用，避免 E2E 連線外部來源。
-- Windows Squirrel installer 由 `npm run make` 產生在 `artifacts/forge-out/make/squirrel.windows/x64/StockReporterAssistantSetup.exe`。建置不等同安裝驗收；首次安裝、升級、移除、捷徑及非管理員啟動仍需隔離 Windows profile 實測。
-- 已知正式 Windows renderer 曾回報 `launch-failed`／退出碼 49；不可為了消除此錯誤關閉正式 BrowserWindow sandbox。Playwright 的 `--no-sandbox` 僅可用於隔離測試。
-- v2 Google OAuth/Calendar 同步、系統匣與登入啟動仍未完成驗收。v1 `index.js` 是使用者既有流程；修改前需確認工作樹與授權範圍。
+- v2 scheduler、排程設定 IPC/UI、MOPS/TWSE/TPEX providers（含每日對帳與漏訊息補存）、SQLite monitors、notification outbox/channel 與 React UI 已有離線測試。正式模式於啟動／resume／每分鐘檢查排程；`REPORTER_USER_DATA_DIR` 存在時預設停用 scheduler，只有下述明確手動來源模式例外。同類手動工作執行中不可重疊，但完成後同一分鐘再次點擊必須建立新檢查。TPEX 違約揭露採官方 `bulletin/breach` 個股表格；舊 `/openapi/v1/violation` 會導回首頁，不可當成有效 JSON。TWSE 違約揭露須按官方儀表板的 BFIGTU 日期範圍查詢，以摘要表最後申報日為資料日期，不可誤用回應頂層查詢日期。2026-09-27 唯讀請求確認 MOPS `ajax_t05st02` 回安全性封鎖頁；改用官方公告快易查後，Playwright 隔離 canary 抓取並顯示 8 筆當日完整公告，但 TPEX OpenAPI 對帳同日為 5 筆而網站只給 4 筆，故標示 `degraded` 並保留漏筆警示。加入隔離關注公司後，每日對帳補存第 9 筆並在畫面顯示。TWSE／TPEX 對帳 OpenAPI 應優先使用 `出表日期`／`Date`，不能把較早的 `發言日期` 當資料日期；9/27 canary 取得同日 4／5 筆。TWSE／TPEX 違約揭露最近申報日同為 9/24，對 9/27 應標記 `stale`，畫面顯示「未確認」而非「0 筆」；違約交割當日有效零筆仍未通過 live 驗收。
+- 重大訊息資料庫保留所有已取得的公告；總覽與重大訊息頁預設只列啟用中的關注公司，頁面「顯示全部公告」可查保存的其他公司紀錄。詳細內容在點選的摘要列原位展開，不應出現在清單底部；切換列時前一列收合。這個畫面篩選不改變通知只針對關注公司的規則。
+- Windows Squirrel installer 由 `npm run make` 產生在 `artifacts/forge-out/make/squirrel.windows/x64/StockReporterAssistantSetup.exe`。packaged smoke 曾找出 external native SQLite 未被 Vite payload 帶入；Forge ignore/native unpack 已修正，`npm run test:windows-smoke` 以暫存 userData 通過。app/setup ICO 已設定；install/update/uninstall 事件分別建立／移除桌面與開始功能表捷徑。2026-09-26 在本機目前 profile 完成 per-user 安裝、實際捷徑、無 Node／管理員權限啟動、驗收用 1.0.1→1.0.2 覆蓋升級保留隔離 SQLite 標記及移除後保留資料 smoke；Squirrel updater 殘留與驗收範圍見 `docs/windows-install-acceptance.md`。2026-09-27 新產出的正式版本 1.0.1 installer 已通過 packaged app 隔離 smoke，但尚未實際安裝驗收。乾淨 profile 安裝已移出驗收範圍；正式既有 userData 路徑仍未驗收。
+- `REPORTER_USER_DATA_DIR` 只可用於隔離測試；它預設停用 scheduler、使用測試專用 Chromium `--no-sandbox` override。不可為了消除先前的 renderer 啟動錯誤而關閉正式 BrowserWindow sandbox。
+- 只有同時明確設定 `REPORTER_USER_DATA_DIR` 與 `REPORTER_TEST_LIVE_SOURCES=1` 時，隔離模式才建立「僅手動」官方來源檢查器；啟動／輪詢／resume 不會自動抓取，Windows Toast 也被抑制。標準 E2E 如需點擊檢查，必須再指定只允許 loopback 的 `REPORTER_TEST_HTTP_PROXY` 並由本機 fixture server 提供所有官方來源回應；不得點擊 live 檢查。人工 canary 仍不得按 Calendar 同步。
+- `node scripts/manual-live-source-acceptance.cjs` 是 opt-in 的 Playwright 真實來源 canary，執行前先 `node scripts/build-e2e-shell.cjs`。它用暫存 userData 從 UI 點兩個檢查、查 SQLite 狀態、把截圖存於忽略版控的 `artifacts/live-source-canary/`；非完整成功時以非零結束。不得納入標準 `npm test`，也不得藉此按 Calendar 同步。2026-09-27 實跑結果記於 `docs/windows-manual-acceptance.md`，仍未通過完整來源驗收。
+- v2 Google OAuth loopback、加密憑證/session、main-process Calendar 查重與寫入、法說會列表及狀態 UI 已實作並有 mock/SQLite/UI 測試。桌面 OAuth client 由應用程式發佈設定提供；一般使用者不得被要求建立或匯入 client JSON。使用者本人已在隔離開發版與先前本機 1.0.0 安裝版完成 OAuth 連線驗收，僅驗證連線，沒有 Calendar 寫入；具名紀錄為 `WIN-GCAL-01` 與 `WIN-GCAL-PACKAGED-01`，新 1.0.1 尚未安裝驗收。明確確認的一次性舊 token 加密遷移已測試但尚無真實 profile 驗收。登入啟動與 start-hidden 設定 IPC/UI 已實作及自動測試；Windows 登出／登入驗收仍待完成。正式模式已實作單一執行個體、close-to-tray、匣選單重開／結束；unit/Electron E2E 通過但 Windows Tray 人工驗收未完成。v1 `index.js` 是使用者既有流程；修改前需確認工作樹與授權範圍。
+- `npm run accept:google-oauth` 是開發版的 opt-in 真實帳號 OAuth 驗收；設定 `REPORTER_PACKAGED_EXECUTABLE` 後直接執行 `node scripts/manual-google-oauth-acceptance.cjs` 可驗收 packaged app。兩者都使用暫存 `REPORTER_USER_DATA_DIR`，只確認已連線；不得按 Calendar 同步，結束時會清除該次暫存 userData。一般 `npm test` 不連 live Google。開發版從本機既有 `credentials.json` 讀取 client；release Forge 僅在維護者明確設定 `REPORTER_GOOGLE_OAUTH_CLIENT_FILE` 指向檔名為 `google-oauth-client.json` 的檔案時將它放入 resources。專案作者已明確授權僅將現有 desktop client 封裝進本機 installer，不含 token、不提交 Git；本機最新版 installer 已完成封裝，暫存副本已清除。不得讀取、記錄或回覆 client 或 token 值。
 - 若標準測試或封裝需要網路，但沙盒拒絕連線，依執行環境的升權流程提出精確命令授權；不得改用其他通道繞過權限。
 
 ## 變更後驗證
@@ -114,7 +120,7 @@ npm run build
 5. Calendar 邏輯變更應覆蓋：過期事件、已存在事件、新事件、民國年跨年度、時區與兩小時結束時間。
 6. 建置設定變更才需要執行 `npm run build`，並檢查 `dist/stock-info-collector.exe`。
 
-## 已知技術債
+## v1 已知技術債
 
 - 沒有自動化測試與 dry-run 模式。
 - `index.js` 同時負責抓取、解析、授權與 Calendar 寫入，測試隔離困難。
@@ -124,5 +130,7 @@ npm run build
 - `pkg` 未列入 `devDependencies`。
 - `npm run deploy` 目前無法成功。
 - `token_bak.json` 這類備份檔名不在現有 `.gitignore` 規則內；處理版控時應特別避免誤提交。
+
+v2 自動化測試、SQLite/provider integration、React UI、Electron E2E、traceability 與 coverage gate 已建立；這些 v1 技術債不可當成 v2 現況。使用者本人已在隔離開發版及本機安裝版完成 Google OAuth 連線（未執行 Calendar 同步）；登入啟動、Tray、sleep/resume、重大訊息 live 來源與產品 UI 驗收仍待完成，依 `openspec/changes/build-stock-reporter-assistant-v2/tasks.md` 和 `docs/scenario-traceability.md` 為準；乾淨 profile 安裝不屬驗收範圍。不得把目前 profile 的 installer smoke 擴大描述為已完成全部正式環境驗收。
 
 處理技術債時不要順手大改。先以可觀察的失敗案例或明確使用需求界定範圍，再做可驗證的最小修正。

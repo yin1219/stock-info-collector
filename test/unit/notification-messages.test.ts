@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildDisclosureNotification, buildMaterialNotification } from '../../src/services/notification-messages';
+import { buildDisclosureNotification, buildMaterialNotification, buildSourceFailureNotification } from '../../src/services/notification-messages';
 
 describe('notification-delivery / single / includes company and subject', () => {
   it('routes a single new material event directly to its detail', () => {
@@ -65,5 +65,15 @@ describe('notification-delivery / empty disclosure / notifies only when enabled'
 describe('notification-delivery / quiet success / persists job without delivering a notification', () => {
   it('produces no material-event notification for an empty event set', () => {
     expect(buildMaterialNotification([])).toBeNull();
+  });
+});
+
+describe('notification-delivery / failure noise / routes the third consecutive source failure to source status', () => {
+  it('includes source identity, streak length, and actionable error detail', () => {
+    expect(buildSourceFailureNotification({ source: 'MOPS', consecutiveFailures: 3, errorMessage: '連線逾時' })).toEqual({
+      title: '資料來源異常',
+      body: 'MOPS 連續 3 次無法取得完整資料：連線逾時',
+      route: { type: 'source-status' },
+    });
   });
 });
