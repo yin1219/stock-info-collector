@@ -13,6 +13,9 @@ export function createMaterialController(repositories: ReturnType<typeof createR
     markRead(id: string) {
       return repositories.materialEvents.markRead(id, now());
     },
+    softDelete(id: string) {
+      return repositories.materialEvents.softDelete(id, now());
+    },
     monitorStatus() {
       const latest = repositories.jobRuns.list('material-event-monitoring')[0];
       const reconciliation = repositories.jobRuns.list('material-event-reconciliation')[0];

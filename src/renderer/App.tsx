@@ -61,7 +61,7 @@ interface MaterialMonitorStatus {
   status: 'active' | 'complete' | 'degraded' | 'stale' | 'failed';
   finishedAt: string | null;
   errorMessage: string | null;
-  sources: Array<{ source: string; status: string; dataDate: string | null; errorMessage: string | null }>;
+  sources: Array<{ source: string; status: string; dataDate: string | null; recordCount?: number; errorMessage: string | null }>;
 }
 
 interface ConferenceRow {
@@ -169,6 +169,8 @@ export function App() {
   const [showAllMaterial, setShowAllMaterial] = useState(false);
   const [expandedMaterialRowId, setExpandedMaterialRowId] = useState<string | null>(null);
   const [selectedMaterialEvent, setSelectedMaterialEvent] = useState<MaterialEventDetail | null>(null);
+  const [materialActionMessage, setMaterialActionMessage] = useState('');
+  const [materialDeleteBusy, setMaterialDeleteBusy] = useState(false);
   const materialDetailRequest = useRef(0);
   const [notificationEventIds, setNotificationEventIds] = useState<string[] | null>(null);
   const [materialMonitorStatus, setMaterialMonitorStatus] = useState<MaterialMonitorStatus | null>(null);
@@ -178,8 +180,12 @@ export function App() {
   const [scheduleMessageKind, setScheduleMessageKind] = useState<'material' | 'disclosure' | null>(null);
   const [dataExportMessage, setDataExportMessage] = useState('');
   const [dataExportBusy, setDataExportBusy] = useState(false);
+  const [testNotificationMessage, setTestNotificationMessage] = useState('');
+  const [testNotificationBusy, setTestNotificationBusy] = useState(false);
   const [runningSchedule, setRunningSchedule] = useState<'material' | 'disclosure' | null>(null);
   const [loginStartupSettings, setLoginStartupSettings] = useState<LoginStartupSettings | null>(null);
+  const [loginStartupBusy, setLoginStartupBusy] = useState(false);
+  const [loginStartupMessage, setLoginStartupMessage] = useState('');
   const [overviewDisclosureCount, setOverviewDisclosureCount] = useState<number | null>(null);
   const [overviewMaterialCount, setOverviewMaterialCount] = useState<number | null>(null);
   const [overviewMaterialEvents, setOverviewMaterialEvents] = useState<MaterialEventRow[]>([]);
@@ -248,6 +254,11 @@ export function App() {
 
   useEffect(() => window.reporterApi.onNotificationRoute((route: ReporterRoute) => {
     setError('');
+    if (route.type === 'test-notification') {
+      setPage('settings');
+      setTestNotificationMessage('已從測試通知返回設定。');
+      return;
+    }
     if (route.type === 'disclosure-list') {
       setNotificationEventIds(null);
       setPage('disclosures');
@@ -347,7 +358,9 @@ export function App() {
       setScheduleMessage(result.status === 'already-running' ? '此工作目前仍在執行，未重複啟動。'
         : job.status === 'failed' ? `${title}檢查失敗：${job.errorMessage ?? '來源錯誤'}`
           : job.status === 'stale' ? `${title}官方資料尚未更新。`
-            : job.status === 'degraded' ? `${title}部分來源檢查失敗，請查看最新狀態。`
+            : job.status === 'degraded' ? kind === 'material'
+              ? '重大訊息來源部分降級；資料可能不完整，請查看已保存公告與來源狀態。'
+              : `${title}部分來源檢查失敗，請查看最新狀態。`
               : `${title}檢查完成，請查看最新狀態。`);
     } catch (cause) {
       setScheduleMessage(cause instanceof Error ? cause.message : String(cause));
@@ -368,14 +381,50 @@ export function App() {
     }
   }
 
-  async function saveLoginStartup() {
-    if (!loginStartupSettings) return;
-    setError('');
+  async function saveLoginStartup(next: LoginStartupSettings) {
+    if (loginStartupBusy) return;
+    setLoginStartupBusy(true);
+    setLoginStartupMessage('正在儲存登入啟動設定…');
     try {
-      setLoginStartupSettings(await window.reporterApi.saveLoginStartupSettings(loginStartupSettings));
-      setScheduleMessage('登入啟動設定已儲存。');
+      const actual = await window.reporterApi.saveLoginStartupSettings(next);
+      setLoginStartupSettings(actual);
+      setLoginStartupMessage(actual.blockedByWindows
+        ? '已登錄啟動項，但 Windows 已停用此應用程式的登入啟動。'
+        : '登入啟動設定已儲存。');
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setLoginStartupMessage(`登入啟動設定失敗：${cause instanceof Error ? cause.message : String(cause)}`);
+    } finally {
+      setLoginStartupBusy(false);
+    }
+  }
+
+  async function sendTestNotification() {
+    setTestNotificationBusy(true);
+    setTestNotificationMessage('');
+    try {
+      const result = await window.reporterApi.sendTestNotification();
+      setTestNotificationMessage(result.status === 'suppressed'
+        ? '隔離測試模式不顯示 Windows 通知。'
+        : 'Windows 已接受測試通知顯示要求；若未看到，請檢查系統通知設定。');
+    } catch (cause) {
+      setTestNotificationMessage(`測試通知失敗：${cause instanceof Error ? cause.message : String(cause)}`);
+    } finally {
+      setTestNotificationBusy(false);
+    }
+  }
+
+  async function scheduleTestNotification() {
+    setTestNotificationBusy(true);
+    setTestNotificationMessage('');
+    try {
+      const result = await window.reporterApi.scheduleTestNotification();
+      setTestNotificationMessage(result.status === 'suppressed'
+        ? '隔離測試模式不顯示 Windows 通知。'
+        : `已排定 ${new Date(result.scheduledAt).toLocaleTimeString('zh-TW', { timeZone: 'Asia/Taipei' })} 發送測試通知。可關閉視窗並讓程式留在系統匣；若選擇「結束」就不會發送。`);
+    } catch (cause) {
+      setTestNotificationMessage(`測試通知排程失敗：${cause instanceof Error ? cause.message : String(cause)}`);
+    } finally {
+      setTestNotificationBusy(false);
     }
   }
 
@@ -442,6 +491,7 @@ export function App() {
       setConferenceMessage('已中斷 Google Calendar 連線。');
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
+      setGoogleCalendarStatus(await window.reporterApi.getGoogleCalendarStatus());
     } finally {
       setConferenceBusy(false);
     }
@@ -491,6 +541,29 @@ export function App() {
     await window.reporterApi.listMaterialEvents({ query: materialQuery, unreadOnly,
       ...(showAllMaterial ? {} : { watchedOnly: true }), ...(notificationEventIds ? { eventIds: notificationEventIds } : {}),
     }).then((result) => setMaterialEvents(result as MaterialEventRow[]));
+  }
+
+  async function softDeleteSelectedMaterialEvent() {
+    if (!selectedMaterialEvent || materialDeleteBusy) return;
+    if (!window.confirm('要從本機清單移除此筆公告嗎？原通知與刪除紀錄會保留；下次官方來源再次取得相同公告時，可能重新通知。')) return;
+    setError('');
+    setMaterialActionMessage('');
+    setMaterialDeleteBusy(true);
+    try {
+      await window.reporterApi.softDeleteMaterialEvent(selectedMaterialEvent.id);
+      materialDetailRequest.current += 1;
+      setExpandedMaterialRowId(null);
+      setSelectedMaterialEvent(null);
+      const result = await window.reporterApi.listMaterialEvents({ query: materialQuery, unreadOnly,
+        ...(showAllMaterial ? {} : { watchedOnly: true }), ...(notificationEventIds ? { eventIds: notificationEventIds } : {}),
+      });
+      setMaterialEvents(result as MaterialEventRow[]);
+      setMaterialActionMessage('已從本機清單移除；下次官方來源再次取得此公告時，可能重新通知。');
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setMaterialDeleteBusy(false);
+    }
   }
 
   return (
@@ -658,27 +731,34 @@ export function App() {
                 {status.errorMessage && <p role="alert" className="error-message">{status.errorMessage}</p>}
                 <button disabled={scheduleStatus.available === false || runningSchedule === kind} type="button" onClick={() => void runSchedule(kind)}>{runningSchedule === kind ? `檢查${title}中…` : `立即檢查${title}`}</button>
                 {scheduleMessageKind === kind && scheduleMessage && <p role="status">{scheduleMessage}</p>}
+                {kind === 'material' && status.status === 'degraded' && <button className="text-button" type="button" onClick={() => setPage('material-events')}>查看重大訊息與來源狀態</button>}
               </article>;
             })}
           </div>
-          <div className="schedule-settings">
-            <h3>重大訊息檢查</h3>
-            <label className="check-label"><input type="checkbox" aria-label="啟用重大訊息監控" checked={scheduleSettings.monitoring.enabled} onChange={(event) => setScheduleSettings({ ...scheduleSettings, monitoring: { ...scheduleSettings.monitoring, enabled: event.target.checked } })} />啟用</label>
-            <label>開始時間<input aria-label="重大訊息開始時間" type="time" value={scheduleSettings.monitoring.start} onChange={(event) => setScheduleSettings({ ...scheduleSettings, monitoring: { ...scheduleSettings.monitoring, start: event.target.value } })} /></label>
-            <label>結束時間<input aria-label="重大訊息結束時間" type="time" value={scheduleSettings.monitoring.end} onChange={(event) => setScheduleSettings({ ...scheduleSettings, monitoring: { ...scheduleSettings.monitoring, end: event.target.value } })} /></label>
-            <label>檢查頻率<select aria-label="重大訊息檢查頻率" value={scheduleSettings.monitoring.intervalMinutes} onChange={(event) => setScheduleSettings({ ...scheduleSettings, monitoring: { ...scheduleSettings.monitoring, intervalMinutes: Number(event.target.value) as ScheduleSettings['monitoring']['intervalMinutes'] } })}><option value={15}>15 分鐘</option><option value={30}>30 分鐘</option><option value={60}>60 分鐘</option><option value={120}>120 分鐘</option></select></label>
-            <h3>違約交割檢查</h3>
-            <label className="check-label"><input type="checkbox" aria-label="啟用違約交割監控" checked={scheduleSettings.disclosure.enabled} onChange={(event) => setScheduleSettings({ ...scheduleSettings, disclosure: { ...scheduleSettings.disclosure, enabled: event.target.checked } })} />啟用</label>
-            <label>每日檢查時間<input aria-label="違約交割檢查時間" type="time" value={scheduleSettings.disclosure.runAt} onChange={(event) => setScheduleSettings({ ...scheduleSettings, disclosure: { ...scheduleSettings.disclosure, runAt: event.target.value } })} /></label>
-            <label className="check-label"><input type="checkbox" aria-label="收到本日無違約揭露通知" checked={scheduleSettings.notifyEmptyDefaultDisclosures} onChange={(event) => setScheduleSettings({ ...scheduleSettings, notifyEmptyDefaultDisclosures: event.target.checked })} />本日無違約揭露時通知</label>
-            <button type="button" onClick={() => void saveSchedule()}>儲存排程</button>
+          <div className="schedule-settings schedule-preferences">
+            <section className="schedule-preference-group" aria-labelledby="material-schedule-title">
+              <div className="schedule-preference-header"><h3 id="material-schedule-title">重大訊息檢查</h3><label className="check-label"><input type="checkbox" aria-label="啟用重大訊息監控" checked={scheduleSettings.monitoring.enabled} onChange={(event) => setScheduleSettings({ ...scheduleSettings, monitoring: { ...scheduleSettings.monitoring, enabled: event.target.checked } })} />啟用</label></div>
+              <div className="schedule-time-row">
+                <label>開始時間<input aria-label="重大訊息開始時間" type="time" value={scheduleSettings.monitoring.start} onChange={(event) => setScheduleSettings({ ...scheduleSettings, monitoring: { ...scheduleSettings.monitoring, start: event.target.value } })} /></label>
+                <label>結束時間<input aria-label="重大訊息結束時間" type="time" value={scheduleSettings.monitoring.end} onChange={(event) => setScheduleSettings({ ...scheduleSettings, monitoring: { ...scheduleSettings.monitoring, end: event.target.value } })} /></label>
+              </div>
+              <label className="frequency-field">檢查頻率<select aria-label="重大訊息檢查頻率" value={scheduleSettings.monitoring.intervalMinutes} onChange={(event) => setScheduleSettings({ ...scheduleSettings, monitoring: { ...scheduleSettings.monitoring, intervalMinutes: Number(event.target.value) as ScheduleSettings['monitoring']['intervalMinutes'] } })}><option value={15}>15 分鐘</option><option value={30}>30 分鐘</option><option value={60}>60 分鐘</option><option value={120}>120 分鐘</option></select></label>
+              <p className="schedule-help">開始與結束時間是允許檢查的時段；兩者相同表示全天。檢查頻率從距離上次檢查的時間計算，不是固定在整點或每刻鐘。沒有新公告時不會發送重大訊息通知。</p>
+            </section>
+            <section className="schedule-preference-group" aria-labelledby="disclosure-schedule-title">
+              <div className="schedule-preference-header"><h3 id="disclosure-schedule-title">違約交割檢查</h3><label className="check-label"><input type="checkbox" aria-label="啟用違約交割監控" checked={scheduleSettings.disclosure.enabled} onChange={(event) => setScheduleSettings({ ...scheduleSettings, disclosure: { ...scheduleSettings.disclosure, enabled: event.target.checked } })} />啟用</label></div>
+              <label className="disclosure-time-field">每日檢查時間<input aria-label="違約交割檢查時間" type="time" value={scheduleSettings.disclosure.runAt} onChange={(event) => setScheduleSettings({ ...scheduleSettings, disclosure: { ...scheduleSettings.disclosure, runAt: event.target.value } })} /></label>
+              <label className="check-label"><input type="checkbox" aria-label="收到本日無違約揭露通知" checked={scheduleSettings.notifyEmptyDefaultDisclosures} onChange={(event) => setScheduleSettings({ ...scheduleSettings, notifyEmptyDefaultDisclosures: event.target.checked })} />本日無違約揭露時通知</label>
+            </section>
+            <button className="save-schedule" type="button" onClick={() => void saveSchedule()}>儲存排程</button>
           </div>
           <div className="schedule-settings desktop-startup-settings">
             <h3>Windows 登入啟動</h3>
             {!loginStartupSettings ? <p role="status">正在載入登入啟動設定…</p> : <>
-              <label className="check-label"><input type="checkbox" aria-label="登入 Windows 時啟動" checked={loginStartupSettings.enabled} onChange={(event) => setLoginStartupSettings({ ...loginStartupSettings, enabled: event.target.checked })} />登入 Windows 時啟動</label>
-              <label className="check-label"><input type="checkbox" aria-label="啟動後縮到系統匣" checked={loginStartupSettings.startHidden} disabled={!loginStartupSettings.enabled} onChange={(event) => setLoginStartupSettings({ ...loginStartupSettings, startHidden: event.target.checked })} />啟動後縮到系統匣</label>
-              <button type="button" onClick={() => void saveLoginStartup()}>儲存登入啟動設定</button>
+              <label className="check-label"><input type="checkbox" aria-label="登入 Windows 時啟動" checked={loginStartupSettings.enabled} disabled={loginStartupBusy} onChange={(event) => void saveLoginStartup({ enabled: event.target.checked, startHidden: loginStartupSettings.startHidden })} />登入 Windows 時啟動</label>
+              <label className="check-label"><input type="checkbox" aria-label="啟動後縮到系統匣" checked={loginStartupSettings.startHidden} disabled={!loginStartupSettings.enabled || loginStartupBusy} onChange={(event) => void saveLoginStartup({ enabled: loginStartupSettings.enabled, startHidden: event.target.checked })} />啟動後縮到系統匣</label>
+              <p>切換後立即儲存；關閉此視窗不會中斷已啟動的背景監控。</p>
+              {(loginStartupMessage || loginStartupSettings.blockedByWindows) && <p role={loginStartupMessage.includes('失敗') || loginStartupSettings.blockedByWindows ? 'alert' : 'status'}>{loginStartupMessage || 'Windows 已停用此應用程式的登入啟動。'}</p>}
             </>}
           </div>
           <div className="schedule-settings data-export-settings">
@@ -687,13 +767,24 @@ export function App() {
             <button type="button" disabled={dataExportBusy} onClick={() => void exportLocalData()}>{dataExportBusy ? '正在匯出…' : '匯出資料'}</button>
             {dataExportMessage && <p role={dataExportMessage.includes('失敗') || dataExportMessage.includes('無法') ? 'alert' : 'status'}>{dataExportMessage}</p>}
           </div>
+          <div className="schedule-settings">
+            <h3>Windows 通知測試</h3>
+            <p>僅發送標示為測試的本機通知；不查詢官方來源、不建立行事曆事件，也不重設公告通知紀錄。</p>
+            <button type="button" disabled={testNotificationBusy} onClick={() => void sendTestNotification()}>{testNotificationBusy ? '正在發送測試通知…' : '發送測試通知'}</button>
+            <button type="button" className="secondary" disabled={testNotificationBusy} onClick={() => void scheduleTestNotification()}>一分鐘後發送測試通知</button>
+            {testNotificationMessage && <p role={testNotificationMessage.startsWith('測試通知失敗') ? 'alert' : 'status'}>{testNotificationMessage}</p>}
+          </div>
         </>}
       </section> : <section aria-labelledby="material-title" className="panel material-panel">
         <div className="section-heading"><div><p className="eyebrow">MATERIAL EVENTS</p><h2 id="material-title">重大訊息</h2></div><span className="count">{showAllMaterial ? '全部' : '關注'} {materialEvents.length} 筆</span></div>
         {materialMonitorStatus && <div role="status" aria-label="重大訊息來源狀態" className={`source-health ${materialMonitorStatus.status}`}>
           <strong>{materialMonitorStatus.status === 'complete' ? '資料來源同步完成' : materialMonitorStatus.status === 'degraded' ? '資料來源部分降級' : materialMonitorStatus.status === 'stale' ? '官方資料尚未更新' : materialMonitorStatus.status === 'failed' ? '資料來源檢查失敗' : '資料來源檢查中'}</strong>
           {materialMonitorStatus.errorMessage && <p>{materialMonitorStatus.errorMessage}</p>}
-          <ul>{materialMonitorStatus.sources.map((source) => <li key={source.source}>{materialSourceName(source.source)}：{monitorSourceStatusLabel(source.status)}{source.dataDate ? `（資料日期 ${source.dataDate}）` : ''}{source.errorMessage ? ` — ${source.errorMessage}` : ''}</li>)}</ul>
+          <ul>{materialMonitorStatus.sources.map((source) => {
+            const details = [source.dataDate ? `資料日期 ${source.dataDate}` : '',
+              (source.status === 'complete' || source.status === 'degraded') && typeof source.recordCount === 'number' ? `來源回傳 ${source.recordCount} 筆` : ''].filter(Boolean);
+            return <li key={source.source}>{materialSourceName(source.source)}：{monitorSourceStatusLabel(source.status)}{details.length ? `（${details.join('，')}）` : ''}{source.errorMessage ? ` — ${source.errorMessage}` : ''}</li>;
+          })}</ul>
         </div>}
         <div className="list-controls material-controls">
           <label className="search-label">搜尋
@@ -703,6 +794,7 @@ export function App() {
           <label className="check-label"><input aria-label="顯示全部公告" type="checkbox" checked={showAllMaterial} onChange={(event) => setShowAllMaterial(event.target.checked)} />顯示全部公告</label>
         </div>
         {error && <p role="alert" className="error-message">{error}</p>}
+        {materialActionMessage && <p role="status" aria-label="重大訊息操作結果">{materialActionMessage}</p>}
         {materialEvents.length === 0 ? <p className="empty-state">{showAllMaterial ? '目前沒有符合條件的重大訊息。' : '目前沒有符合條件的關注公司重大訊息；可勾選「顯示全部公告」。'}</p> : <div className="material-list" role="list">
           {materialEvents.map((event) => <article className={`material-row ${event.readAt ? 'read' : 'unread'} ${expandedMaterialRowId === event.id ? 'expanded' : ''}`} key={event.id} role="listitem">
             <button className="material-summary" type="button" aria-label={`${event.companyName} ${event.title}`} aria-expanded={expandedMaterialRowId === event.id} aria-controls={expandedMaterialRowId === event.id ? `material-detail-${event.id}` : undefined} onClick={() => void openMaterialEvent(event.id)}>
@@ -717,6 +809,7 @@ export function App() {
               {selectedMaterialEvent.original && <button className="original-link" type="button" onClick={() => void openMaterialEvent(selectedMaterialEvent.original!.id, event.id)}>原公告：{selectedMaterialEvent.original.title}</button>}
               {selectedMaterialEvent.relatedRevisions.length > 0 && <p>後續版本：{selectedMaterialEvent.relatedRevisions.map((revision) => revision.title).join('、')}</p>}
               {!selectedMaterialEvent.readAt && <button className="secondary" type="button" onClick={() => void markSelectedMaterialEventRead()}>標記為已讀</button>}
+              <button className="secondary" type="button" disabled={materialDeleteBusy} onClick={() => void softDeleteSelectedMaterialEvent()}>刪除此筆本機公告</button>
             </aside>}
           </article>)}
         </div>}

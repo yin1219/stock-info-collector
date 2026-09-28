@@ -49,10 +49,61 @@ test('windows-distribution / installer / configures Squirrel per-user setup and 
   assert.match(packageJson.devDependencies['@electron-forge/maker-squirrel'], /^7\.11\.2$/);
 });
 
+test('windows-distribution / installer / keeps the on-disk executable ASCII while preserving the Chinese product name', async () => {
+  const createJiti = require('jiti');
+  const forge = (await createJiti(__filename).import(path.join(root, 'forge.config.ts'))).default;
+  const packageJson = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
+  const packagedSmoke = await readFile(path.join(root, 'scripts/packaged-windows-smoke.cjs'), 'utf8');
+
+  assert.equal(packageJson.productName, '股市記者小幫手');
+  assert.equal(forge.packagerConfig.executableName, 'StockReporterAssistant');
+  assert.match(packagedSmoke, /StockReporterAssistant\.exe/);
+});
+
+test('windows-distribution / installer / exposes a repeatable Squirrel archive smoke check', async () => {
+  const packageJson = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
+  assert.match(packageJson.scripts['test:installer-smoke'], /installer-package-smoke\.ps1/);
+  await access(path.join(root, 'scripts', 'installer-package-smoke.ps1'));
+});
+
 test('windows-distribution / upgrade / advances beyond the installed 1.0.0 release with matching lockfile metadata', async () => {
   const packageJson = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
   const lock = JSON.parse(await readFile(path.join(root, 'package-lock.json'), 'utf8'));
   assert.notEqual(packageJson.version, '1.0.0');
+  assert.equal(lock.version, packageJson.version);
+  assert.equal(lock.packages[''].version, packageJson.version);
+});
+
+test('windows-distribution / upgrade / uses a newer installer version than the installed 1.0.2 with the garbled executable name', async () => {
+  const packageJson = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
+  const lock = JSON.parse(await readFile(path.join(root, 'package-lock.json'), 'utf8'));
+  const [major, minor, patch] = packageJson.version.split('.').map(Number);
+
+  assert.ok(major > 1 || (major === 1 && (minor > 0 || patch > 2)));
+  assert.equal(lock.version, packageJson.version);
+  assert.equal(lock.packages[''].version, packageJson.version);
+});
+
+test('windows-distribution / upgrade / increments beyond the installed 1.0.3 before packaging review fixes', async () => {
+  const packageJson = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
+  const [major, minor, patch] = packageJson.version.split('.').map(Number);
+  assert.ok(major > 1 || (major === 1 && (minor > 0 || patch > 3)));
+});
+
+test('windows-distribution / upgrade / increments beyond installed 1.0.4 for the scheduler correction', async () => {
+  const packageJson = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
+  const lock = JSON.parse(await readFile(path.join(root, 'package-lock.json'), 'utf8'));
+  const [major, minor, patch] = packageJson.version.split('.').map(Number);
+  assert.ok(major > 1 || (major === 1 && (minor > 0 || patch > 4)));
+  assert.equal(lock.version, packageJson.version);
+  assert.equal(lock.packages[''].version, packageJson.version);
+});
+
+test('windows-distribution / upgrade / increments beyond installed 1.0.5 for calendar disconnect and settings UI fixes', async () => {
+  const packageJson = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
+  const lock = JSON.parse(await readFile(path.join(root, 'package-lock.json'), 'utf8'));
+  const [major, minor, patch] = packageJson.version.split('.').map(Number);
+  assert.ok(major > 1 || (major === 1 && (minor > 0 || patch > 5)));
   assert.equal(lock.version, packageJson.version);
   assert.equal(lock.packages[''].version, packageJson.version);
 });
@@ -122,7 +173,10 @@ test('renderer architecture / has domain, provider, repository and service bound
   }
 
   const rendererFiles = await collectSourceFiles(path.join(root, 'src/renderer'));
-  const forbiddenImport = /(?:\bfrom\s*|\bimport\s*\(?\s*|\brequire\s*\(\s*)['"](?:node:|electron['"]|better-sqlite3|sqlite3|(?:\.\.\/)+src\/(?:main|providers|repositories|services)(?:\/|['"]))/;
+  const forbiddenImport = /(?:\bfrom\s*|\bimport\s*\(?\s*|\brequire\s*\(\s*)['"](?:node:|electron['"]|better-sqlite3|sqlite3|(?:\.\.\/)+(?:src\/)?(?:main|providers|repositories|services)(?:\/|['"]))/;
+  for (const specifier of ['../main/main', '../services/scheduler', '../../providers/mops-search-material', '../repositories/index']) {
+    assert.match(`import x from '${specifier}'`, forbiddenImport, `must reject ${specifier}`);
+  }
   for (const filePath of rendererFiles) {
     const source = await readFile(filePath, 'utf8');
     assert.doesNotMatch(source, forbiddenImport, path.relative(root, filePath));

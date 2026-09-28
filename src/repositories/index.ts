@@ -36,6 +36,7 @@ interface MaterialEvent {
   sourceUrl: string;
   discoveredAt: string;
   readAt: string | null;
+  deletedAt: string | null;
   eventType: 'announcement' | 'correction' | 'supplement';
 }
 
@@ -116,7 +117,7 @@ interface NotificationDelivery {
 
 const companyColumns = `id, market, stock_code AS stockCode, name, updated_at AS updatedAt`;
 const watchlistColumns = `id, company_id AS companyId, active, category, notes, created_at AS createdAt, updated_at AS updatedAt`;
-const materialEventColumns = `id, company_id AS companyId, source_key AS sourceKey, content_fingerprint AS contentFingerprint, title, content, published_at AS publishedAt, revision_of AS revisionOf, source, source_url AS sourceUrl, discovered_at AS discoveredAt, read_at AS readAt, event_type AS eventType`;
+const materialEventColumns = `id, company_id AS companyId, source_key AS sourceKey, content_fingerprint AS contentFingerprint, title, content, published_at AS publishedAt, revision_of AS revisionOf, source, source_url AS sourceUrl, discovered_at AS discoveredAt, read_at AS readAt, deleted_at AS deletedAt, event_type AS eventType`;
 const disclosureColumns = `id, company_id AS companyId, market, disclosure_date AS disclosureDate, stock_code AS stockCode, broker_code AS brokerCode, source_key AS sourceKey, disclosed_at AS disclosedAt, content_json AS contentJson`;
 const conferenceColumns = `id, company_id AS companyId, stock_code AS stockCode, company_name AS companyName, source_key AS sourceKey, starts_at AS startsAt, location, content, source_url AS sourceUrl`;
 const calendarSyncColumns = `id, conference_id AS conferenceId, status, calendar_event_id AS calendarEventId, last_error AS lastError, updated_at AS updatedAt`;
@@ -222,41 +223,54 @@ export function createRepositories(database: SQLiteDatabase) {
     },
 
     materialEvents: {
-      upsert(input: Omit<MaterialEvent, 'id' | 'source' | 'sourceUrl' | 'discoveredAt' | 'readAt' | 'eventType'> & {
+      upsert(input: Omit<MaterialEvent, 'id' | 'source' | 'sourceUrl' | 'discoveredAt' | 'readAt' | 'deletedAt' | 'eventType'> & {
         revisionOf?: string | null;
         source?: string;
         sourceUrl?: string;
         discoveredAt?: string;
         readAt?: string | null;
         eventType?: MaterialEvent['eventType'];
+        reacquiredSourceKey?: string;
       }): MaterialEvent {
-        return database.prepare(`
+        return database.transaction(() => {
+          const prior = database.prepare('SELECT id, deleted_at AS deletedAt FROM material_events WHERE source_key = ?')
+            .get(input.sourceKey) as { id: string; deletedAt: string | null } | undefined;
+          const event = database.prepare(`
           INSERT INTO material_events (id, company_id, source_key, content_fingerprint, title, content, published_at, revision_of, source, source_url, discovered_at, read_at, event_type)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT (source_key) DO UPDATE SET company_id = excluded.company_id,
             content_fingerprint = excluded.content_fingerprint, title = excluded.title,
             content = excluded.content, published_at = excluded.published_at, revision_of = excluded.revision_of,
-            source = excluded.source, source_url = excluded.source_url, event_type = excluded.event_type
+            source = excluded.source, source_url = excluded.source_url, event_type = excluded.event_type,
+            deleted_at = NULL, read_at = CASE WHEN material_events.deleted_at IS NOT NULL THEN NULL ELSE material_events.read_at END
           RETURNING ${materialEventColumns}
         `).get(randomUUID(), input.companyId, input.sourceKey, input.contentFingerprint, input.title, input.content, input.publishedAt,
           input.revisionOf ?? null, input.source ?? 'mops', input.sourceUrl ?? '', input.discoveredAt ?? input.publishedAt,
           input.readAt ?? null, input.eventType ?? 'announcement') as MaterialEvent;
+          if (prior?.deletedAt) {
+            database.prepare('UPDATE material_event_deletion_audit SET reacquired_at = ?, reacquired_source_key = ? WHERE event_id = ? AND reacquired_at IS NULL')
+              .run(input.discoveredAt ?? input.publishedAt, input.reacquiredSourceKey ?? input.sourceKey, prior.id);
+          }
+          return event;
+        })();
       },
       find(id: string): MaterialEvent | undefined {
         return database.prepare(`SELECT ${materialEventColumns} FROM material_events WHERE id = ?`)
           .get(id) as MaterialEvent | undefined;
       },
       count(): number {
-        return (database.prepare('SELECT COUNT(*) AS count FROM material_events').get() as { count: number }).count;
+        return (database.prepare('SELECT COUNT(*) AS count FROM material_events WHERE deleted_at IS NULL').get() as { count: number }).count;
       },
       findBySourceKey(sourceKey: string): MaterialEvent | undefined {
-        return database.prepare(`SELECT ${materialEventColumns} FROM material_events WHERE source_key = ?`)
-          .get(sourceKey) as MaterialEvent | undefined;
+        return (database.prepare(`SELECT ${materialEventColumns} FROM material_events WHERE source_key = ?`)
+          .get(sourceKey) ?? database.prepare(`SELECT ${materialEventColumns.split(', ').map((column) => `e.${column}`).join(', ')} FROM material_events e
+            INNER JOIN material_event_deletion_audit a ON a.event_id = e.id
+            WHERE a.reacquired_source_key = ? ORDER BY a.deleted_at DESC LIMIT 1`).get(sourceKey)) as MaterialEvent | undefined;
       },
       findNearbyAnnouncement(companyId: string, title: string, publishedAt: string): MaterialEvent | undefined {
         return database.prepare(`SELECT ${materialEventColumns} FROM material_events
           WHERE company_id = ? AND title = ? AND ABS(unixepoch(published_at) - unixepoch(?)) <= 60
-          ORDER BY ABS(unixepoch(published_at) - unixepoch(?)) LIMIT 1`)
+          ORDER BY deleted_at IS NOT NULL, ABS(unixepoch(published_at) - unixepoch(?)) LIMIT 1`)
           .get(companyId, title, publishedAt, publishedAt) as MaterialEvent | undefined;
       },
       details(id: string): (MaterialEvent & { market: Market; stockCode: string; companyName: string; relatedRevisions: MaterialEvent[] }) | undefined {
@@ -270,7 +284,7 @@ export function createRepositories(database: SQLiteDatabase) {
         return { ...item, relatedRevisions };
       },
       list(options: { query?: string; unreadOnly?: boolean; watchedOnly?: boolean; eventIds?: string[]; limit?: number } = {}): Array<MaterialEvent & { market: Market; stockCode: string; companyName: string }> {
-        const conditions: string[] = [];
+        const conditions: string[] = ['e.deleted_at IS NULL'];
         const parameters: Array<string | number> = [];
         if (options.unreadOnly) conditions.push('e.read_at IS NULL');
         if (options.watchedOnly) conditions.push('EXISTS (SELECT 1 FROM watchlist_entries w WHERE w.company_id = e.company_id AND w.active = 1)');
@@ -292,9 +306,24 @@ export function createRepositories(database: SQLiteDatabase) {
           ORDER BY e.published_at DESC LIMIT ?`).all(...parameters, limit) as Array<MaterialEvent & { market: Market; stockCode: string; companyName: string }>;
       },
       markRead(id: string, readAt: string): MaterialEvent {
-        const result = database.prepare('UPDATE material_events SET read_at = ? WHERE id = ?').run(readAt, id);
+        const result = database.prepare('UPDATE material_events SET read_at = ? WHERE id = ? AND deleted_at IS NULL').run(readAt, id);
         if (result.changes !== 1) throw new Error(`Material event not found: ${id}`);
         return database.prepare(`SELECT ${materialEventColumns} FROM material_events WHERE id = ?`).get(id) as MaterialEvent;
+      },
+      softDelete(id: string, deletedAt: string): MaterialEvent {
+        return database.transaction(() => {
+          const existing = this.find(id);
+          if (!existing) throw new Error(`Material event not found: ${id}`);
+          if (existing.deletedAt) throw new Error('重大訊息已刪除');
+          database.prepare('UPDATE material_events SET deleted_at = ? WHERE id = ?').run(deletedAt, id);
+          database.prepare('INSERT INTO material_event_deletion_audit (id, event_id, deleted_at) VALUES (?, ?, ?)')
+            .run(randomUUID(), id, deletedAt);
+          return this.find(id)!;
+        })();
+      },
+      deletionAudit(id: string): Array<{ deletedAt: string; reacquiredAt: string | null }> {
+        return database.prepare('SELECT deleted_at AS deletedAt, reacquired_at AS reacquiredAt FROM material_event_deletion_audit WHERE event_id = ? ORDER BY deleted_at')
+          .all(id) as Array<{ deletedAt: string; reacquiredAt: string | null }>;
       },
     },
 
@@ -435,6 +464,16 @@ export function createRepositories(database: SQLiteDatabase) {
       },
       count(): number {
         return (database.prepare('SELECT COUNT(*) AS count FROM notification_outbox').get() as { count: number }).count;
+      },
+      listRecoverable(cutoff: string, limit = 20): NotificationOutboxItem[] {
+        if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new RangeError('通知補送筆數超出範圍');
+        return database.prepare(`SELECT ${notificationColumns} FROM notification_outbox o
+          LEFT JOIN (SELECT outbox_id, COUNT(*) AS attempts, MAX(attempted_at) AS last_attempted_at
+            FROM notification_deliveries GROUP BY outbox_id) d ON d.outbox_id = o.id
+          WHERE o.status IN ('pending', 'failed') AND o.created_at <= ?
+            AND COALESCE(d.attempts, 0) < 3
+            AND (d.last_attempted_at IS NULL OR d.last_attempted_at <= ?)
+          ORDER BY o.created_at, o.rowid LIMIT ?`).all(cutoff, cutoff, limit) as NotificationOutboxItem[];
       },
       setStatus(id: string, status: 'pending' | 'sent' | 'failed', sentAt: string | null = null): void {
         const result = database.prepare('UPDATE notification_outbox SET status = ?, sent_at = ? WHERE id = ?')

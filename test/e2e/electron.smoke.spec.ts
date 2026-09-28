@@ -50,6 +50,7 @@ test('watchlist-management / Electron IPC / removes a watched company while pres
 
 test('material-event-monitoring / Electron UI / defaults to watched announcements and expands details in the clicked row', async () => {
   const root = path.resolve(process.cwd());
+  const longTitle = '公告本公司名稱由「舊公司名稱」更名為「新的完整公司名稱」，並補充說明董事會決議、變更登記及其他相關事項';
   const userData = await mkdtemp(path.join(os.tmpdir(), 'stock-reporter-material-e2e-'));
   const app = await electron.launch({
     args: [root], cwd: root,
@@ -66,21 +67,39 @@ test('material-event-monitoring / Electron UI / defaults to watched announcement
         .run('watch-1', 'company-watched', 1, '', '', '2026-09-27T00:00:00Z', '2026-09-27T00:00:00Z');
       const addEvent = database.prepare('INSERT INTO material_events (id, company_id, source_key, content_fingerprint, title, content, published_at) VALUES (?, ?, ?, ?, ?, ?, ?)');
       addEvent.run('event-watched', 'company-watched', 'watched-1', 'hash-1', '關注公告', '關注公告全文', '2026-09-27T01:00:00Z');
-      addEvent.run('event-other', 'company-other', 'other-1', 'hash-2', '其他公告', '其他公告全文', '2026-09-27T02:00:00Z');
+      addEvent.run('event-other', 'company-other', 'other-1', 'hash-2', longTitle, '其他公告全文', '2026-09-27T02:00:00Z');
     } finally { database.close(); }
     await window.getByRole('tab', { name: '重大訊息' }).click();
     await expect(window.getByText('關注 1 筆')).toBeVisible();
     await expect(window.getByRole('button', { name: '台積電 關注公告' })).toBeVisible();
-    await expect(window.getByRole('button', { name: '其他公司 其他公告' })).toHaveCount(0);
+    await expect(window.getByRole('button', { name: `其他公司 ${longTitle}` })).toHaveCount(0);
     await window.getByRole('checkbox', { name: '顯示全部公告' }).check();
     await expect(window.getByText('全部 2 筆')).toBeVisible();
-    const otherRow = window.getByRole('button', { name: '其他公司 其他公告' }).locator('..');
-    await otherRow.getByRole('button', { name: '其他公司 其他公告' }).click();
+    const otherRow = window.getByRole('button', { name: `其他公司 ${longTitle}` }).locator('..');
+    await otherRow.getByRole('button', { name: `其他公司 ${longTitle}` }).click();
     await expect(otherRow.getByRole('complementary', { name: '重大訊息完整內容' })).toContainText('其他公告全文');
+    const close = otherRow.getByRole('button', { name: '關閉重大訊息詳情' });
+    const closeBounds = await close.boundingBox();
+    expect(closeBounds).not.toBeNull();
+    expect(closeBounds!.width).toBeGreaterThanOrEqual(48);
+    expect(closeBounds!.height).toBeLessThanOrEqual(48);
     const watchedRow = window.getByRole('button', { name: '台積電 關注公告' }).locator('..');
     await watchedRow.getByRole('button', { name: '台積電 關注公告' }).click();
     await expect(watchedRow.getByRole('complementary', { name: '重大訊息完整內容' })).toContainText('關注公告全文');
     await expect(otherRow.getByRole('complementary', { name: '重大訊息完整內容' })).toHaveCount(0);
+    window.once('dialog', (dialog) => dialog.accept());
+    await watchedRow.getByRole('button', { name: '刪除此筆本機公告' }).click();
+    await expect(window.getByRole('button', { name: '台積電 關注公告' })).toHaveCount(0);
+    await expect(window.getByRole('button', { name: `其他公司 ${longTitle}` })).toBeVisible();
+    const saved = new Database(path.join(userData, 'reporter.sqlite3'), { readonly: true });
+    try {
+      expect(saved.prepare('SELECT deleted_at AS deletedAt FROM material_events WHERE id = ?').get('event-watched'))
+        .toMatchObject({ deletedAt: expect.any(String) });
+      expect(saved.prepare('SELECT COUNT(*) AS count FROM material_event_deletion_audit WHERE event_id = ?').get('event-watched'))
+        .toEqual({ count: 1 });
+      expect(saved.prepare('SELECT deleted_at AS deletedAt FROM material_events WHERE id = ?').get('event-other'))
+        .toEqual({ deletedAt: null });
+    } finally { saved.close(); }
   } finally {
     await app.evaluate(({ app: electronApp }) => electronApp.exit(0)).catch(() => undefined);
     await app.close();
@@ -169,6 +188,16 @@ test('desktop-app-lifecycle / Electron shell / opens the isolated renderer', asy
     await expect(window.getByRole('combobox', { name: '重大訊息檢查頻率' })).toHaveValue('60');
     await expect(window.getByText('隔離測試模式不會連線官方網站；立即檢查已停用。')).toBeVisible();
     await expect(window.getByRole('button', { name: '立即檢查重大訊息' })).toBeDisabled();
+    await window.getByRole('button', { name: '發送測試通知', exact: true }).click();
+    await expect(window.getByText('隔離測試模式不顯示 Windows 通知。')).toBeVisible();
+    await window.getByRole('button', { name: '一分鐘後發送測試通知' }).click();
+    await expect(window.getByText('隔離測試模式不顯示 Windows 通知。')).toBeVisible();
+    await window.getByRole('tab', { name: '重大訊息' }).click();
+    await app.evaluate(({ BrowserWindow }) => {
+      BrowserWindow.getAllWindows()[0].webContents.send('notification:navigate', { type: 'test-notification' });
+    });
+    await expect(window.getByRole('heading', { name: '監控排程' })).toBeVisible();
+    await expect(window.getByText('已從測試通知返回設定。')).toBeVisible();
     await window.getByRole('tab', { name: '法說會' }).click();
     await expect(window.getByText('尚未設定', { exact: true })).toBeVisible();
     await window.getByRole('button', { name: '連線 Google Calendar' }).click();
@@ -182,6 +211,65 @@ test('desktop-app-lifecycle / Electron shell / opens the isolated renderer', asy
   } finally {
     const applicationLog = await readFile(path.join(userData, 'logs', 'application.log'), 'utf8').catch(() => '');
     if (applicationLog) console.info(`e2e:main-log:${applicationLog}`);
+    await app.evaluate(({ app: electronApp }) => electronApp.exit(0)).catch(() => undefined);
+    await app.close();
+    await rm(userData, { recursive: true, force: true });
+  }
+});
+
+test('monitoring-schedule / Electron settings / keeps time and frequency hit targets inside the compact panel', async () => {
+  const root = path.resolve(process.cwd());
+  const userData = await mkdtemp(path.join(os.tmpdir(), 'stock-reporter-settings-e2e-'));
+  const app = await electron.launch({
+    args: [root], cwd: root,
+    env: { ...process.env, REPORTER_USER_DATA_DIR: userData, REPORTER_TEST_TRAY: '1' },
+  });
+  try {
+    const window = await app.firstWindow({ timeout: 8_000 });
+    await window.setViewportSize({ width: 650, height: 700 });
+    await window.getByRole('tab', { name: '設定' }).click();
+    for (const name of ['重大訊息開始時間', '重大訊息結束時間', '重大訊息檢查頻率', '違約交割檢查時間']) {
+      const control = window.getByLabel(name);
+      await control.scrollIntoViewIfNeeded();
+      const layout = await control.evaluate((element) => {
+        const rect = element.getBoundingClientRect();
+        const label = element.closest('label')!.getBoundingClientRect();
+        const hit = document.elementFromPoint(rect.right - 12, rect.top + rect.height / 2);
+        return {
+          fillsLabel: rect.width >= label.width - 1,
+          withinLabel: rect.right <= label.right + 1,
+          hittable: hit === element || element.contains(hit),
+        };
+      });
+      expect(layout, name).toEqual({ fillsLabel: true, withinLabel: true, hittable: true });
+      await control.click({ position: { x: (await control.boundingBox())!.width - 12, y: 21 } });
+      await window.keyboard.press('Escape');
+    }
+    await window.setViewportSize({ width: 1500, height: 900 });
+    const materialGroup = window.getByRole('region', { name: '重大訊息檢查' });
+    const disclosureGroup = window.getByRole('region', { name: '違約交割檢查' });
+    await expect(materialGroup.getByLabel('重大訊息檢查頻率')).toBeVisible();
+    await expect(disclosureGroup.getByLabel('違約交割檢查時間')).toBeVisible();
+    const frequencyBox = await materialGroup.getByLabel('重大訊息檢查頻率').boundingBox();
+    expect(frequencyBox!.width).toBeLessThanOrEqual(220);
+    const frequencyArrow = await materialGroup.getByLabel('重大訊息檢查頻率').evaluate((select) => {
+      const field = select.closest('label')!;
+      const arrow = getComputedStyle(field, '::after');
+      const input = getComputedStyle(select);
+      return {
+        customArrow: input.appearance === 'none' && arrow.content !== 'none',
+        rightGap: Number.parseFloat(arrow.right),
+        pointerEvents: arrow.pointerEvents,
+        textClearance: Number.parseFloat(input.paddingRight),
+      };
+    });
+    expect(frequencyArrow.customArrow).toBe(true);
+    expect(frequencyArrow.rightGap).toBeGreaterThanOrEqual(14);
+    expect(frequencyArrow.pointerEvents).toBe('none');
+    expect(frequencyArrow.textClearance).toBeGreaterThanOrEqual(36);
+    await materialGroup.scrollIntoViewIfNeeded();
+    await window.screenshot({ path: path.join(root, 'artifacts', 'settings-layout-e2e.png') });
+  } finally {
     await app.evaluate(({ app: electronApp }) => electronApp.exit(0)).catch(() => undefined);
     await app.close();
     await rm(userData, { recursive: true, force: true });
@@ -243,11 +331,22 @@ test('desktop-app-lifecycle / isolated tray harness / opens a visible window onl
 test('monitoring-schedule / opt-in live-source harness / exposes manual checks without an automatic startup run', async () => {
   const root = path.resolve(process.cwd());
   const userData = await mkdtemp(path.join(os.tmpdir(), 'stock-reporter-live-source-e2e-'));
-  const app = await electron.launch({
-    args: [root], cwd: root,
-    env: { ...process.env, REPORTER_USER_DATA_DIR: userData, REPORTER_TEST_LIVE_SOURCES: '1', REPORTER_TEST_TRAY: '1' },
+  const requests: string[] = [];
+  const server = createServer((request, response) => {
+    requests.push(request.url ?? '');
+    response.statusCode = 503;
+    response.end('Offline test fixture: unexpected source request');
   });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  if (!address || typeof address === 'string') throw new Error('無法啟動離線來源測試伺服器');
+  let app: Awaited<ReturnType<typeof electron.launch>> | undefined;
   try {
+    app = await electron.launch({
+      args: [root], cwd: root,
+      env: { ...process.env, REPORTER_USER_DATA_DIR: userData, REPORTER_TEST_LIVE_SOURCES: '1',
+        REPORTER_TEST_TRAY: '1', REPORTER_TEST_HTTP_PROXY: `http://127.0.0.1:${address.port}/source` },
+    });
     const window = await app.firstWindow({ timeout: 8_000 });
     await window.getByRole('tab', { name: '設定' }).click();
     await expect(window.getByRole('button', { name: '立即檢查重大訊息' })).toBeEnabled();
@@ -260,9 +359,13 @@ test('monitoring-schedule / opt-in live-source harness / exposes manual checks w
     const database = new Database(path.join(userData, 'reporter.sqlite3'), { readonly: true });
     try { expect(database.prepare('SELECT COUNT(*) AS count FROM job_runs').get()).toEqual({ count: 0 }); }
     finally { database.close(); }
+    expect(requests).toEqual([]);
   } finally {
-    await app.evaluate(({ app: electronApp }) => electronApp.exit(0)).catch(() => undefined);
-    await app.close();
+    if (app) {
+      await app.evaluate(({ app: electronApp }) => electronApp.exit(0)).catch(() => undefined);
+      await app.close();
+    }
+    await new Promise<void>((resolve) => server.close(() => resolve()));
     await rm(userData, { recursive: true, force: true });
   }
 });

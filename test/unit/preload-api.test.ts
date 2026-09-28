@@ -24,12 +24,15 @@ describe('security architecture / preload exposes narrow typed watchlist APIs', 
     await api.syncConferences();
     await api.disconnectGoogleCalendar();
     await api.exportUserData();
+    await api.sendTestNotification();
+    await api.scheduleTestNotification();
+    await api.softDeleteMaterialEvent('event-1');
 
     expect(calls.map(({ channel }) => channel)).toEqual([
       'watchlist:list', 'watchlist:add', 'watchlist:update', 'watchlist:set-active',
       'watchlist:remove', 'watchlist:import-preview', 'watchlist:import-apply',
       'calendar:get-status', 'calendar:import-credentials', 'calendar:migrate-legacy-token', 'calendar:connect', 'calendar:list', 'calendar:sync', 'calendar:disconnect',
-      'data:export',
+      'data:export', 'notification:send-test', 'notification:schedule-test', 'material-events:soft-delete',
     ]);
     expect('invoke' in api).toBe(false);
     expect('readFile' in api).toBe(false);
@@ -48,9 +51,10 @@ describe('security architecture / preload exposes narrow typed watchlist APIs', 
     const unsubscribe = api.onNotificationRoute((route) => routes.push(route));
     listener?.({}, { type: 'event-detail', eventId: 'event-1' });
     listener?.({}, { type: 'event-detail', eventId: 123 });
+    listener?.({}, { type: 'test-notification' });
     unsubscribe();
 
-    expect(routes).toEqual([{ type: 'event-detail', eventId: 'event-1' }]);
+    expect(routes).toEqual([{ type: 'event-detail', eventId: 'event-1' }, { type: 'test-notification' }]);
     expect(removed).toBe(true);
   });
 });

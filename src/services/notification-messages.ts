@@ -9,7 +9,8 @@ export type NotificationRoute =
   | { type: 'event-detail'; eventId: string }
   | { type: 'event-list'; eventIds: string[] }
   | { type: 'source-status' }
-  | { type: 'disclosure-list' };
+  | { type: 'disclosure-list' }
+  | { type: 'test-notification' };
 
 export interface NotificationMessage {
   title: string;

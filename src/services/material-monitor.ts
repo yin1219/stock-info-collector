@@ -1,4 +1,4 @@
-import { prepareMaterialEvent } from '../domain/dedup';
+import { materialContentFingerprint, prepareMaterialEvent } from '../domain/dedup';
 import type { createRepositories } from '../repositories';
 import type { MaterialProviderResult, MaterialSourceRecord } from '../providers/mops-material';
 import { buildMaterialNotification } from './notification-messages';
@@ -110,21 +110,27 @@ export function createMaterialMonitor(dependencies: {
             market: record.market, stockCode: record.stockCode, name: record.companyName, updatedAt: checkedAt,
           });
           const nearby = dependencies.repositories.materialEvents.findNearbyAnnouncement(company.id, record.title, record.publishedAt);
-          if (nearby?.source === `${record.market.toLowerCase()}-reconciliation`) continue;
+          if (nearby?.source === `${record.market.toLowerCase()}-reconciliation` && !nearby.deletedAt) continue;
           const original = dependencies.repositories.materialEvents.findBySourceKey(record.sourceKey);
-          let prepared = prepareMaterialEvent(record, original ? [original] : []);
+          if (original && original.sourceKey !== record.sourceKey && !original.deletedAt
+            && original.contentFingerprint === materialContentFingerprint(record.content)) continue;
+          const restoreFromAlias = original?.deletedAt && original.sourceKey !== record.sourceKey ? original : undefined;
+          const restoreFromNearby = !original && nearby?.deletedAt ? nearby : undefined;
+          const restoring = restoreFromAlias ?? restoreFromNearby;
+          let prepared = prepareMaterialEvent(record, original && original.sourceKey === record.sourceKey ? [original] : []);
           if (prepared.kind === 'revision') {
             const revision = dependencies.repositories.materialEvents.findBySourceKey(prepared.sourceKey);
             if (revision && original) prepared = prepareMaterialEvent(record, [original, revision]);
           }
           const explicitKind = /補充/.test(record.title) ? 'supplement' : /更正|修正/.test(record.title) ? 'correction' : 'announcement';
           const event = dependencies.repositories.materialEvents.upsert({
-            companyId: company.id, sourceKey: prepared.sourceKey, contentFingerprint: prepared.contentFingerprint,
+            companyId: company.id, sourceKey: restoring?.sourceKey ?? prepared.sourceKey, contentFingerprint: prepared.contentFingerprint,
             title: record.title, content: record.content, publishedAt: record.publishedAt,
-            revisionOf: prepared.revisionOf, source: record.source, sourceUrl: record.sourceUrl,
+            revisionOf: restoring?.revisionOf ?? prepared.revisionOf, source: record.source, sourceUrl: record.sourceUrl,
             discoveredAt: checkedAt, eventType: prepared.kind === 'revision' ? explicitKind === 'announcement' ? 'correction' : explicitKind : explicitKind,
+            ...(restoring && restoring.sourceKey !== record.sourceKey ? { reacquiredSourceKey: record.sourceKey } : {}),
           });
-          if (prepared.shouldNotify) {
+          if (prepared.shouldNotify || Boolean(original?.deletedAt) || Boolean(restoring)) {
             newEventIds.push(event.id);
             if (activeByKey.has(`${record.market}:${record.stockCode}`)) {
               notifyCandidates.push({ eventId: event.id, companyId: company.id, companyName: record.companyName, subject: record.title });

@@ -85,6 +85,8 @@ SQLite 放在 Electron `userData`，使用 WAL、foreign keys、busy timeout 與
 
 重大訊息資料庫保留已取得的全市場歷史資料，但頁面與總覽預設只查目前啟用的關注公司；「顯示全部公告」只切換查詢範圍，不更動保存或通知規則。摘要列可原位展開完整內容，切換到另一列會收合上一列；更正公告的原公告連結仍留在目前展開列，避免讀者跳到清單底端。
 
+使用者在正式版確認刪除單筆本機公告時，以 v5 migration 增加 `material_events.deleted_at` 與 `material_event_deletion_audit`，不實際刪除公告列、版本關聯或既有 outbox／delivery。列表與未讀計數排除已刪項目，舊通知連結仍可查原詳情。來源日後再次取得同來源鍵或同公司／主旨／一分鐘內的跨來源公告時，恢復原 ID、清除已讀狀態、補記 `reacquired_at` 與跨來源的 `reacquired_source_key`；後者兼作去重別名，避免第一次恢復後再次檢查又新增第二列。新 job run 通知意圖允許仍啟用關注的公司再收一次通知；其後未變更的重抓仍去重。跨來源對帳若只有摘要，恢復時保留原本完整內文與來源連結。刪除稽核一併納入不含憑證的使用者匯出。這是本機重測能力，不會刪除官方公告或自動查詢 Google Calendar。
+
 JSON 僅作既有設定匯入、使用者匯出與測試 fixture，避免多程序寫入、部分寫入與查詢困難。
 
 ### 5. 重大訊息採「即時來源＋備援＋每日對帳」
@@ -118,6 +120,8 @@ main process 內使用單一 scheduler，每分鐘計算到期工作，但以資
 Windows Toast 是第一個 `NotificationChannel`。同一 job run 只有一筆新事件時顯示公司與主旨，多筆時顯示公司數／事件數。通知 payload 只保存內部 route 與 record IDs；點擊後透過 single-instance routing 開啟對應篩選頁。
 
 Outbox 記錄 `pending/sent/failed` 與嘗試次數，確保通知投遞錯誤不遺失資料。未來 Gmail 實作同一 channel 介面，但不預先加入 Gmail OAuth scope 或 UI。
+
+設定頁的「發送測試通知」直接經可信 main-process IPC 呼叫 Windows notification channel，不建立業務事件或 outbox 紀錄；通知必須明確標示為測試，點擊只返回設定頁。隔離 `REPORTER_USER_DATA_DIR` 模式抑制原生 Toast，回報抑制狀態供自動測試；正式模式只將作業系統接受顯示要求回報給 UI，不把它解讀為使用者已看到 Toast。原生失敗保留診斷事件，實際外觀與點擊仍需 Windows 人工驗收。
 
 ### 9. Google 憑證與敏感資料使用 OS 使用者範圍保護
 

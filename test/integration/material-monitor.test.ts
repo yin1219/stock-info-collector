@@ -72,6 +72,23 @@ describe('material-event-monitoring / persistence and job integration', () => {
     } finally { database.close(); }
   });
 
+  it('rolls back an event when its notification intent cannot be saved in the same SQLite transaction', async () => {
+    const { database, repositories, now } = await setup();
+    repositories.notificationOutbox.enqueue = () => { throw new Error('outbox write failed'); };
+    const monitor = createMaterialMonitor({
+      repositories,
+      primary: { async fetchForDate(): Promise<MaterialProviderResult> { return { status: 'complete', dataDate: '2026-09-26', events: [event('TWSE', '2330', 'mops:atomicity')] }; } },
+      channel: { async send() { throw new Error('notification must not be sent'); } }, now: () => now,
+    });
+    await expect(monitor.run({ targetDate: '2026-09-26', idempotencyKey: 'material:atomicity' })).rejects.toThrow('outbox write failed');
+    database.close();
+    const reopened = openDatabase(paths!.database);
+    try {
+      expect(reopened.prepare('SELECT COUNT(*) AS count FROM material_events').get()).toEqual({ count: 0 });
+      expect(reopened.prepare('SELECT COUNT(*) AS count FROM notification_outbox').get()).toEqual({ count: 0 });
+    } finally { reopened.close(); }
+  });
+
   it('does not notify an unchanged source item a second time', async () => {
     const { database, repositories } = await setup();
     let sends = 0;
@@ -122,10 +139,11 @@ describe('material-event-monitoring / persistence and job integration', () => {
 
   it('keeps an unhealthy fallback stale and marks a primary degraded result as degraded', async () => {
     const { database, repositories } = await setup();
+    let fallbackCalls = 0;
     const degraded = createMaterialMonitor({
       repositories,
-      primary: { async fetchForDate(): Promise<MaterialProviderResult> { return { status: 'degraded', dataDate: '2026-09-26', events: [], warning: '公告快易查可能漏筆' }; } },
-      fallback: { async fetchForDate() { throw 'rss unavailable'; } },
+      primary: { async fetchForDate(): Promise<MaterialProviderResult> { return { status: 'degraded', dataDate: '2026-09-26', events: [], warning: '上市、上櫃官方回覆查無公告資料；公告快易查可能漏筆' }; } },
+      fallback: { async fetchForDate() { fallbackCalls += 1; throw 'rss unavailable'; } },
       channel: { async send() {} }, now: () => '2026-09-26T10:00:00.000Z',
     });
     const stale = createMaterialMonitor({
@@ -138,7 +156,10 @@ describe('material-event-monitoring / persistence and job integration', () => {
       const degradedRun = await degraded.run({ targetDate: '2026-09-26', idempotencyKey: 'material:primary-degraded' });
       const staleRun = await stale.run({ targetDate: '2026-09-26', idempotencyKey: 'material:stale-fallback-failed' });
       expect(degradedRun.status).toBe('degraded');
-      expect(repositories.sourceChecks.find(degradedRun.jobRunId, 'MOPS')).toMatchObject({ status: 'degraded', errorMessage: '公告快易查可能漏筆' });
+      expect(repositories.sourceChecks.find(degradedRun.jobRunId, 'MOPS')).toMatchObject({ status: 'degraded', recordCount: 0, errorMessage: expect.stringContaining('官方回覆查無公告資料') });
+      expect(repositories.sourceChecks.find(degradedRun.jobRunId, 'MOPS-RSS')).toBeUndefined();
+      expect(fallbackCalls).toBe(0);
+      expect(repositories.notificationOutbox.count()).toBe(0);
       expect(staleRun.status).toBe('stale');
       expect(repositories.sourceChecks.find(staleRun.jobRunId, 'MOPS-RSS')).toMatchObject({ status: 'failed', errorMessage: 'rss still old' });
     } finally { database.close(); }

@@ -67,17 +67,26 @@ export function createMaterialReconciliationMonitor(dependencies: {
             if (record.market !== item.market || !watched.has(`${record.market}:${record.stockCode}`)) continue;
             const company = dependencies.repositories.companies.findByStockCode(record.stockCode, record.market)!;
             const existing = dependencies.repositories.materialEvents.findBySourceKey(record.sourceKey);
-            if (!existing && dependencies.repositories.materialEvents.findNearbyAnnouncement(company.id, record.title, record.publishedAt)?.source === 'mops') continue;
-            const prepared = prepareMaterialEvent(record, existing ? [existing] : []);
+            if (existing && existing.sourceKey !== record.sourceKey && !existing.deletedAt) continue;
+            const nearby = dependencies.repositories.materialEvents.findNearbyAnnouncement(company.id, record.title, record.publishedAt);
+            if (nearby?.source === 'mops' && !nearby.deletedAt) continue;
+            const restoreFromAlias = existing?.deletedAt && existing.sourceKey !== record.sourceKey ? existing : undefined;
+            const restoreFromNearby = !existing && nearby?.deletedAt ? nearby : undefined;
+            const restoring = restoreFromAlias ?? restoreFromNearby;
+            const prepared = prepareMaterialEvent(record, existing && existing.sourceKey === record.sourceKey ? [existing] : []);
             const event = dependencies.repositories.materialEvents.upsert({
               companyId: company.id,
-              sourceKey: prepared.sourceKey, contentFingerprint: prepared.contentFingerprint,
-              title: record.title, content: record.content, publishedAt: record.publishedAt,
-              revisionOf: prepared.revisionOf, source: `${item.market.toLowerCase()}-reconciliation`,
-              sourceUrl: record.sourceUrl, discoveredAt: checkedAt,
+              sourceKey: restoring?.sourceKey ?? prepared.sourceKey,
+              contentFingerprint: restoring?.contentFingerprint ?? prepared.contentFingerprint,
+              title: restoring?.title ?? record.title, content: restoring?.content ?? record.content,
+              publishedAt: restoring?.publishedAt ?? record.publishedAt,
+              revisionOf: restoring?.revisionOf ?? prepared.revisionOf,
+              source: restoring?.source ?? `${item.market.toLowerCase()}-reconciliation`,
+              sourceUrl: restoring?.sourceUrl ?? record.sourceUrl, discoveredAt: checkedAt,
               eventType: /補充/.test(record.title) ? 'supplement' : /更正|修正/.test(record.title) ? 'correction' : 'announcement',
+              ...(restoring && restoring.sourceKey !== record.sourceKey ? { reacquiredSourceKey: record.sourceKey } : {}),
             });
-            if (prepared.shouldNotify) discoveredIds.push(event.id);
+            if (prepared.shouldNotify || Boolean(existing?.deletedAt) || Boolean(restoring)) discoveredIds.push(event.id);
           }
         }
         const candidates = discoveredIds.flatMap((eventId) => {

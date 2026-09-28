@@ -39,6 +39,8 @@
 - [x] 4.5 實作關注公司篩選、交易式儲存、source check 與 job run 狀態，並以主要成功、降級、過期及完全失敗情境做整合測試
 - [x] 4.6 以 React 完成重大訊息列表、點選列原位展開完整內容、預設關注公司與全部公告切換、已讀狀態、篩選、更正關聯及來源健康呈現，並先以 UI 測試定義點擊／鍵盤開啟詳情及降級警示不會顯示成「沒有新資料」
 - [x] 4.7 文件化重大訊息來源優先序、對帳與錯誤狀態，並以 provider fixture 測試作為格式變更偵測門檻
+- [x] 4.8 以 Red–Green–Refactor 完成正式版單筆公告確認式軟刪除、SQLite v5 稽核、跨來源重抓後單次重測通知、匯出與 IPC／React／Electron 測試，並於實際 Windows 安裝版驗收操作
+- [x] 4.9 區分公告快易查明確「查無公告資料」與來源失敗（含 RSS 404），以官方回應 fixture 先建立失敗測試；空結果仍標記可能漏筆並保留每日對帳警示，不宣稱完整零筆
 
 ## 5. 實作全市場違約交割監控
 
@@ -58,6 +60,8 @@
 - [x] 6.5 實作 Windows 單筆、彙總、違約交割與連續三次來源失敗 Toast，並先以通知 adapter 測試定義內容、零重大訊息保持安靜、可設定無違約揭露通知及異常降噪
 - [x] 6.6 實作通知點擊的 single-instance route，並以整合測試驗證單筆進詳情、多筆進該 job run 的篩選列表
 - [x] 6.7 完成排程設定與執行狀態 UI，並以 UI 測試驗證儲存、立即檢查、執行中防重複及失敗訊息
+- [x] 6.8 在設定頁加入明確標示的 Windows 測試通知，先以通知 adapter／IPC／React UI／隔離 Electron E2E 失敗測試定義內容、點擊返回與無業務副作用，再於實際 Windows 安裝版確認 Toast 外觀與點擊路由
+- [ ] 6.9 在設定頁加入一次性「一分鐘後發送測試通知」，以 fake timer／IPC／UI／Electron 測試先定義：不抓官方來源、不寫 Calendar、不改公告去重、關窗留在系統匣仍可觸發、明確結束後不觸發；於實際 Windows 驗收 Toast
 
 ## 7. 遷移法說會與 Google Calendar
 
@@ -76,6 +80,7 @@
 - [ ] 8.4 實作可切換的 Windows 登入啟動與啟動後縮至系統匣，並以實際登出／登入驗證設定開、關皆生效
 - [ ] 8.5 串接 power resume 到補查 service，並在 Windows 休眠跨過排程後驗證只新增一次補查工作
 - [x] 8.6 加入無障礙標籤、鍵盤導覽及錯誤／空白／載入狀態，並以自動 accessibility scan 與鍵盤走查驗證主要流程
+- [x] 8.7 依安裝版截圖與作者回報確認控制項目前可點；以 Playwright Electron 驗證窄／寬視窗的點擊區域，改善頻率箭頭離選項過遠及兩組排程交錯的版面；登入啟動切換須立即持久化並回報生效或失敗，不能只在畫面呈現未儲存勾選。新版安裝版的視覺與實際登入驗收仍分別依 8.2／8.4
 
 ## 9. 打包、遷移與發佈驗收
 
@@ -85,4 +90,11 @@
 - [x] 9.4 執行首次安裝、覆蓋升級與移除驗收，並確認升級保留資料、移除政策與畫面／文件揭露一致
 - [ ] 9.5 並行比對舊排程與新版法說會結果至少一個驗收週期，確認一致後文件化停用舊工作排程及 rollback 步驟
 - [x] 9.6 更新 README、AGENTS.md 與使用者操作手冊至正式 v2 架構，並逐條驗證安裝、設定、監控、備份及復原指令／操作
-- [ ] 9.7 執行全套單元、provider 契約、SQLite 整合、React UI、Electron E2E 與安裝 smoke tests，確認 OpenSpec 九項 capability 的 Scenario traceability 為 100%、關鍵規則 branch coverage 為 100%、domain／services 達 90% line 與 85% branch，且所有未自動化 Scenario 均有具名 Windows 驗收紀錄
+- [ ] 9.7 在新增的 4.9、6.9、8.7 完成後重跑全套單元、provider 契約、SQLite 整合、React UI、Electron E2E 與安裝 smoke tests，確認 OpenSpec 九項 capability 的 Scenario traceability 為 100%、關鍵規則 branch coverage 為 100%、domain／services 達 90% line 與 85% branch，且所有未自動化 Scenario 均有具名 Windows 驗收紀錄
+
+## 10. 依規格進行獨立審查
+
+兩項審查在本輪功能修正與 9.7 驗證後執行，邊界與停止條件見 `docs/review-scope-v2.md`；Gmail 寄信僅研究可行性，不納入本次 v2 實作或授權範圍。
+
+- [x] 10.1 由獨立 sub-agent 依九項 OpenSpec capability、design 與 Scenario traceability 對 v2 變更做一次有界 code review；回報可重現且影響規格／安全／資料正確性的發現，修正 P0/P1 並驗證，P2 有明確處置紀錄
+- [x] 10.2 由另一獨立 sub-agent 依相同規格做一次有界 unit／integration test review；檢查測試是否真正能抓到錯誤、fixture 與時鐘／SQLite／外部隔離是否可信，補齊高風險缺口並驗證，不以無目的覆蓋率或風格重寫延長審查

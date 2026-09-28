@@ -28,9 +28,9 @@ describe('local-data-management / SQLite application schema', () => {
     try {
       const columns = database.pragma('table_info(material_events)') as Array<{ name: string }>;
       expect(columns.map(({ name }) => name)).toEqual(expect.arrayContaining([
-        'source', 'source_url', 'discovered_at', 'read_at', 'event_type',
+        'source', 'source_url', 'discovered_at', 'read_at', 'deleted_at', 'event_type',
       ]));
-      expect(database.prepare('SELECT MAX(version) AS version FROM schema_migrations').get()).toEqual({ version: 4 });
+      expect(database.prepare('SELECT MAX(version) AS version FROM schema_migrations').get()).toEqual({ version: 5 });
     } finally {
       database.close();
     }
@@ -45,6 +45,7 @@ describe('local-data-management / SQLite application schema', () => {
         'companies',
         'watchlist_entries',
         'material_events',
+        'material_event_deletion_audit',
         'default_disclosures',
         'conferences',
         'calendar_syncs',
@@ -65,7 +66,7 @@ describe('local-data-management / SQLite application schema', () => {
     try {
       const columns = database.pragma('table_info(conferences)') as Array<{ name: string }>;
       expect(columns.map(({ name }) => name)).toContain('source_url');
-      expect(database.prepare('SELECT MAX(version) AS version FROM schema_migrations').get()).toEqual({ version: 4 });
+      expect(database.prepare('SELECT MAX(version) AS version FROM schema_migrations').get()).toEqual({ version: 5 });
     } finally { database.close(); }
   });
 

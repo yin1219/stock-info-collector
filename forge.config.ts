@@ -17,6 +17,7 @@ const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
     icon: 'assets/app-icon',
+    executableName: 'StockReporterAssistant',
     electronZipDir: process.env.REPORTER_ELECTRON_ZIP_DIR || undefined,
     ...(oauthClientResource ? { extraResource: [oauthClientResource] } : {}),
     ignore: (file: string) => {

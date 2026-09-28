@@ -27,6 +27,10 @@
 - **WHEN** Google 拒絕已保存的授權憑證
 - **THEN** 系統停止該次寫入、保留待同步項目並提示使用者重新授權
 
+#### Scenario: 撤銷已失效授權時中斷連線
+- **WHEN** 使用者選擇中斷 Google Calendar，而 Google 回覆 token 已失效或撤銷請求失敗
+- **THEN** 系統仍清除 v2 本機加密保存的授權 token 並顯示未連線；非已失效錯誤須告知 Google 端撤銷未確認，不得刪除 v1 的 `token.json` 或既有法說會資料
+
 ### Requirement: 使用者可直接啟動 Google OAuth
 系統 SHALL 使用由應用程式提供的桌面 OAuth client 設定。一般使用者 SHALL 可直接選擇連線並在系統瀏覽器完成授權，不得要求使用者自行建立或匯入 OAuth client JSON。
 

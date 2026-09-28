@@ -162,6 +162,24 @@ const initialMigrations: readonly Migration[] = [
       database.exec("ALTER TABLE conferences ADD COLUMN source_url TEXT NOT NULL DEFAULT '';");
     },
   },
+  {
+    version: 5,
+    name: 'material event soft deletion audit',
+    up(database) {
+      database.exec(`
+        ALTER TABLE material_events ADD COLUMN deleted_at TEXT;
+        CREATE TABLE material_event_deletion_audit (
+          id TEXT PRIMARY KEY NOT NULL,
+          event_id TEXT NOT NULL REFERENCES material_events(id) ON DELETE RESTRICT,
+          deleted_at TEXT NOT NULL,
+          reacquired_at TEXT,
+          reacquired_source_key TEXT
+        );
+        CREATE INDEX idx_material_event_deletion_audit_event ON material_event_deletion_audit(event_id, deleted_at);
+        CREATE INDEX idx_material_event_deletion_audit_source ON material_event_deletion_audit(reacquired_source_key);
+      `);
+    },
+  },
 ];
 
 export function openDatabase(filename: string, options: OpenDatabaseOptions = {}): SQLiteDatabase {

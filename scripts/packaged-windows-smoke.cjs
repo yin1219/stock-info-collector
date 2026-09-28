@@ -7,7 +7,7 @@ const { _electron: electron } = require('@playwright/test');
 async function main() {
   const executable = process.env.REPORTER_PACKAGED_EXECUTABLE
     ? path.resolve(process.env.REPORTER_PACKAGED_EXECUTABLE)
-    : path.resolve(process.cwd(), 'artifacts/forge-out/股市記者小幫手-win32-x64/股市記者小幫手.exe');
+    : path.resolve(process.cwd(), 'artifacts/forge-out/股市記者小幫手-win32-x64/StockReporterAssistant.exe');
   await access(executable).catch(() => { throw new Error('找不到 packaged app；請先執行 npm run build'); });
   const isolatedRoot = await mkdtemp(path.join(os.tmpdir(), 'stock-reporter-packaged-smoke-'));
   const userData = path.join(isolatedRoot, 'userData');
@@ -30,6 +30,8 @@ async function main() {
     await window.getByRole('combobox', { name: '重大訊息檢查頻率' }).waitFor({ state: 'visible' });
     await window.getByRole('checkbox', { name: '收到本日無違約揭露通知' }).waitFor({ state: 'visible' });
     await window.getByRole('button', { name: '匯出資料' }).waitFor({ state: 'visible' });
+    await window.getByRole('button', { name: '發送測試通知', exact: true }).click();
+    await window.getByText('隔離測試模式不顯示 Windows 通知。').waitFor({ state: 'visible' });
   } finally {
     await app.close();
     const log = await readFile(path.join(userData, 'logs', 'application.log'), 'utf8').catch(() => '');

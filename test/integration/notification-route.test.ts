@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events';
 import { describe, expect, it } from 'vitest';
 import { createReporterApi, type IpcInvoker } from '../../src/preload/api';
 import { createWindowsNotificationChannel } from '../../src/main/windows-notification-channel';
+import { createTestNotificationController } from '../../src/main/test-notification-controller';
 import { buildMaterialNotification, type NotificationMessage, type NotificationRoute } from '../../src/services/notification-messages';
 
 class FakeToast extends EventEmitter {
@@ -38,4 +39,25 @@ describe('notification-delivery / click route integration', () => {
 
     expect(received).toEqual([expected]);
   });
+});
+
+it('notification-delivery / test notification / routes a clicked test toast back to settings through preload', async () => {
+  const listeners = new Map<string, (event: unknown, payload: unknown) => void>();
+  const api = createReporterApi('test', {
+    invoke: async () => undefined,
+    on: (channel, listener) => { listeners.set(channel, listener); },
+    removeListener: (channel) => { listeners.delete(channel); },
+  });
+  const received: NotificationRoute[] = [];
+  api.onNotificationRoute((route) => received.push(route));
+  const channel = createWindowsNotificationChannel({
+    Notification: FakeToast,
+    onRoute: (route) => listeners.get('notification:navigate')?.({}, route),
+  });
+
+  await createTestNotificationController({ channel, isolated: false }).send();
+  FakeToast.latest!.emit('click');
+
+  expect(FakeToast.latest!.options.title).toContain('測試通知');
+  expect(received).toEqual([{ type: 'test-notification' }]);
 });

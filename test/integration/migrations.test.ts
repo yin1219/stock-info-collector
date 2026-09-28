@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3';
+import { unlink } from 'node:fs/promises';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createTestPaths } from '../support';
 import { openDatabase, runMigrations, type Migration } from '../../src/repositories/migrations';
@@ -35,10 +36,38 @@ describe('local-data-management / SQLite migrations', () => {
     const reopened = openDatabase(databasePath);
     try {
       expect(reopened.prepare('SELECT version FROM schema_migrations ORDER BY version').all())
-        .toEqual([{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }]);
+        .toEqual([{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }]);
     } finally {
       reopened.close();
     }
+  });
+
+  it('backs up a v4 database before adding soft deletion and keeps existing announcements', async () => {
+    const databasePath = await createDatabasePath();
+    const prior = openDatabase(databasePath);
+    try {
+      prior.prepare('INSERT INTO companies (id, market, stock_code, name, updated_at) VALUES (?, ?, ?, ?, ?)')
+        .run('company-1', 'TWSE', '2330', '測試公司', '2026-09-26T10:00:00Z');
+      prior.prepare('INSERT INTO material_events (id, company_id, source_key, content_fingerprint, title, content, published_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+        .run('event-1', 'company-1', 'mops:old', 'hash', '舊公告', '完整內文', '2026-09-26T10:00:00Z');
+      prior.exec('DROP TABLE material_event_deletion_audit; ALTER TABLE material_events DROP COLUMN deleted_at; DELETE FROM schema_migrations WHERE version = 5');
+    } finally { prior.close(); }
+
+    await unlink(`${databasePath}.pre-v5.backup`);
+
+    const upgraded = openDatabase(databasePath);
+    try {
+      expect(upgraded.prepare('SELECT deleted_at AS deletedAt FROM material_events WHERE id = ?').get('event-1'))
+        .toEqual({ deletedAt: null });
+      expect(upgraded.prepare('SELECT MAX(version) AS version FROM schema_migrations').get()).toEqual({ version: 5 });
+    } finally { upgraded.close(); }
+
+    const backup = new Database(`${databasePath}.pre-v5.backup`, { readonly: true });
+    try {
+      expect(backup.prepare('SELECT MAX(version) AS version FROM schema_migrations').get()).toEqual({ version: 4 });
+      expect(backup.prepare('SELECT content FROM material_events WHERE id = ?').get('event-1'))
+        .toEqual({ content: '完整內文' });
+    } finally { backup.close(); }
   });
 
   it('rolls back only the failing migration and rejects startup', async () => {

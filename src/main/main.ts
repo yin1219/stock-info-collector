@@ -18,6 +18,9 @@ import { registerDisclosureIpc } from './disclosure-ipc';
 import { createMaterialController } from './material-controller';
 import { registerMaterialIpc } from './material-ipc';
 import { createWindowsNotificationChannel } from './windows-notification-channel';
+import { createTestNotificationController } from './test-notification-controller';
+import { registerTestNotificationIpc } from './test-notification-ipc';
+import { createOutboxRecovery } from '../services/notification-recovery';
 import type { NotificationRoute } from '../services/notification-messages';
 import { createMopsSearchMaterialProvider } from '../providers/mops-search-material';
 import { createMopsMaterialRssProvider } from '../providers/mops-material-rss';
@@ -60,6 +63,10 @@ let unregisterScheduleHandlers: (() => void) | undefined;
 let unregisterLoginStartupHandlers: (() => void) | undefined;
 let unregisterGoogleCalendarHandlers: (() => void) | undefined;
 let unregisterDataExportHandlers: (() => void) | undefined;
+let unregisterTestNotificationHandlers: (() => void) | undefined;
+let stopTestNotification: (() => void) | undefined;
+let startOutboxRecovery: (() => void) | undefined;
+let stopOutboxRecovery: (() => void) | undefined;
 let pendingNotificationRoute: NotificationRoute | undefined;
 let stopScheduler: (() => void) | undefined;
 let monitoringScheduler: ReturnType<typeof createMonitoringScheduler> | undefined;
@@ -260,6 +267,17 @@ function initializeApplicationServices(): void {
   const notificationChannel = enableManualLiveSources
     ? { async send(): Promise<void> { /* Manual source inspection does not display Windows Toast notifications. */ } }
     : createWindowsNotificationChannel({ Notification, onRoute: routeFromNotification });
+  if (!process.env.REPORTER_USER_DATA_DIR) {
+    const recovery = createOutboxRecovery({ repositories, channel: notificationChannel });
+    startOutboxRecovery = () => {
+      const drain = () => { void recovery.drain().then((result) => {
+        if (result.attempted) logger.info('notification-outbox-recovered', result);
+      }).catch((error: unknown) => logger.error('notification-outbox-recovery-failed', error)); };
+      drain();
+      const interval = setInterval(drain, 60_000);
+      stopOutboxRecovery = () => clearInterval(interval);
+    };
+  }
   const controller = createWatchlistController({ repositories, directory });
   const isTrustedMainFrame = (event: unknown): boolean => {
     const ipcEvent = event as IpcMainInvokeEvent;
@@ -400,7 +418,7 @@ function initializeApplicationServices(): void {
           enabled: disclosureSettings.enabled ?? true, runAt: disclosureSettings.runAt ?? '18:30',
           lastSuccessfulLocalDate: () => {
             const run = repositories.jobRuns.list('default-disclosure-monitoring')
-              .find((item) => item.status === 'complete' || item.status === 'degraded');
+              .find((item) => item.status === 'complete');
             return run?.finishedAt ? taipeiDate(new Date(run.finishedAt)) : null;
           },
           lastRunLocalDate: () => {
@@ -422,6 +440,14 @@ function initializeApplicationServices(): void {
   const loginStartup = createLoginStartupController(app, process.execPath, app.isPackaged && process.platform === 'win32');
   unregisterLoginStartupHandlers = registerLoginStartupIpc(ipcMain, loginStartup, isTrustedMainFrame);
   unregisterDataExportHandlers = registerDataExportIpc(ipcMain, dataExportController, isTrustedMainFrame);
+  const testNotificationController = createTestNotificationController({
+    channel: notificationChannel, isolated: Boolean(process.env.REPORTER_USER_DATA_DIR),
+    onFailure: (error) => logger.error('delayed-test-notification-failed', error),
+  });
+  stopTestNotification = testNotificationController.stop;
+  unregisterTestNotificationHandlers = registerTestNotificationIpc(ipcMain,
+    testNotificationController,
+    isTrustedMainFrame, (error) => logger.error('test-notification-failed', error));
   stopScheduler = lifecycle?.stop;
 }
 
@@ -443,6 +469,7 @@ if (!isSquirrelStartup && hasSingleInstanceLock) void app.whenReady().then(() =>
   initializeApplicationServices();
   logger.info('main-ready');
   createWindow();
+  startOutboxRecovery?.();
   if (!process.env.REPORTER_USER_DATA_DIR || enableIsolatedTrayHarness) {
     tray = new ElectronTray(path.join(app.getAppPath(), 'assets', 'app-icon.ico'));
     tray.setToolTip('股市記者小幫手');
@@ -480,6 +507,10 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', () => {
+  stopOutboxRecovery?.();
+  stopOutboxRecovery = undefined;
+  stopTestNotification?.();
+  stopTestNotification = undefined;
   stopScheduler?.();
   stopScheduler = undefined;
   tray?.destroy();
@@ -498,6 +529,8 @@ app.on('before-quit', () => {
   unregisterGoogleCalendarHandlers = undefined;
   unregisterDataExportHandlers?.();
   unregisterDataExportHandlers = undefined;
+  unregisterTestNotificationHandlers?.();
+  unregisterTestNotificationHandlers = undefined;
   if (applicationDatabase?.open) applicationDatabase.close();
   applicationDatabase = null;
 });

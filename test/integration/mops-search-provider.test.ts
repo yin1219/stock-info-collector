@@ -45,6 +45,24 @@ describe('material-event-monitoring / MOPS website search / official dated annou
     await expect(provider.fetchForDate('2026-09-27')).resolves.toMatchObject({ status: 'degraded', events: [] });
   });
 
+  it('treats the official no-announcement response as a degraded empty observation, not a source failure', async () => {
+    const provider = createMopsSearchMaterialProvider({
+      async post() { return '\ufeff{"status":"fail","message":["查無公告資料"],"data":[]}'; },
+      async get() { throw new Error('no detail pages for an empty day'); },
+    });
+    await expect(provider.fetchForDate('2026-09-28')).resolves.toMatchObject({
+      status: 'degraded', dataDate: '2026-09-28', events: [], warning: expect.stringContaining('查無公告資料'),
+    });
+  });
+
+  it('still rejects other failed website responses', async () => {
+    const provider = createMopsSearchMaterialProvider({
+      async post() { return { status: 'fail', message: '安全性封鎖', data: [] }; },
+      async get() { throw new Error('unexpected detail request'); },
+    });
+    await expect(provider.fetchForDate('2026-09-28')).rejects.toThrow('未回傳成功資料列');
+  });
+
   it('rejects another date or a non-official detail link', async () => {
     const provider = createMopsSearchMaterialProvider({
       async post() { return { status: 'success', data: [{ CDATE: '115/09/25', CTIME: '17:30:00', TYPEK: '上市', COMPANY_ID: '2330', COMPANY_NAME: '測試半導體', SUBJECT: '董事會決議', HYPERLINK: 'https://evil.example/steal' }] }; },

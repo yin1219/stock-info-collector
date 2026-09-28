@@ -8,15 +8,19 @@ interface SearchHttpPort {
 
 type SearchRow = Record<string, unknown>;
 
-function searchRows(response: unknown): SearchRow[] {
+function searchRows(response: unknown): { rows: SearchRow[]; explicitlyEmpty: boolean } {
   const value = typeof response === 'string'
     ? JSON.parse(response.trim().replace(/^\uFEFF/, '')) as unknown
     : response;
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('MOPS 公告快易查回應格式無效');
-  const result = value as { status?: unknown; data?: unknown };
+  const result = value as { status?: unknown; message?: unknown; data?: unknown };
+  const noAnnouncements = result.message === '查無公告資料'
+    || (Array.isArray(result.message) && result.message.length === 1 && result.message[0] === '查無公告資料');
+  if (result.status === 'fail' && noAnnouncements
+    && Array.isArray(result.data) && result.data.length === 0) return { rows: [], explicitlyEmpty: true };
   if (result.status !== 'success' || !Array.isArray(result.data)) throw new Error('MOPS 公告快易查未回傳成功資料列');
   if (result.data.length >= 1_000) throw new Error('MOPS 公告快易查達 1000 筆上限，不能確認資料完整');
-  return result.data as SearchRow[];
+  return { rows: result.data as SearchRow[], explicitlyEmpty: false };
 }
 
 function text(row: SearchRow, key: string): string {
@@ -65,12 +69,14 @@ export function createMopsSearchMaterialProvider(
       if (!match) throw new Error('重大訊息查詢日期必須使用 YYYY-MM-DD 格式');
       const rocDate = `${Number(match[1]) - 1911}/${match[2]}/${match[3]}`;
       const events: MaterialSourceRecord[] = [];
+      const emptyMarkets: string[] = [];
       for (const [market, type, label] of [['TWSE', 'sii', '上市'], ['TPEX', 'otc', '上櫃']] as const) {
         const body = new URLSearchParams({
           step: '00', RADIO_CM: '1', TYPEK: type, CO_MARKET: '', CO_ID: '', PRO_ITEM: 'M00',
           SUBJECT: '', SDATE: rocDate, EDATE: rocDate, lang: 'TW', AN: '',
         }).toString();
-        const rows = searchRows(await http.post(endpoint, body));
+        const { rows, explicitlyEmpty } = searchRows(await http.post(endpoint, body));
+        if (explicitlyEmpty) emptyMarkets.push(label);
         if (rows.some((row) => text(row, 'TYPEK') !== label)) throw new Error(`MOPS 公告快易查市場別不符：${market}`);
         events.push(...rows.map((row) => record(row, market, targetDate)));
       }
@@ -88,7 +94,7 @@ export function createMopsSearchMaterialProvider(
       }
       return {
         status: 'degraded', dataDate: targetDate, events,
-        warning: '公告快易查可取得官方公告，但已觀察到可能漏筆；請以每日對帳補回，不可視為完整即時來源',
+        warning: `${emptyMarkets.length ? `${emptyMarkets.join('、')}官方回覆查無公告資料；` : ''}公告快易查可能漏筆，須以每日對帳補回，不能證明今日全無重大訊息`,
       };
     },
   };

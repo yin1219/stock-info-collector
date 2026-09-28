@@ -7,6 +7,7 @@ export interface MaterialReadService {
   list(filter: { query?: string; unreadOnly?: boolean; watchedOnly?: boolean; eventIds?: string[] }): unknown;
   detail(id: string): unknown;
   markRead(id: string): unknown;
+  softDelete(id: string): unknown;
   monitorStatus(): unknown;
 }
 
@@ -35,6 +36,7 @@ export function registerMaterialIpc(
     }],
     ['material-events:detail', (payload) => service.detail(readId(payload))],
     ['material-events:mark-read', (payload) => service.markRead(readId(payload))],
+    ['material-events:soft-delete', (payload) => service.softDelete(readId(payload))],
     ['material-events:status', () => service.monitorStatus()],
   ];
   for (const [channel, handler] of routes) {

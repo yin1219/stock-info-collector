@@ -50,10 +50,12 @@ export function createMonitoringScheduler(dependencies: {
     }
     if (dependencies.disclosure.enabled
       && isDailyJobDue(instant, dependencies.disclosure.runAt, dependencies.disclosure.lastSuccessfulLocalDate())) {
-      const lastRunDate = dependencies.disclosure.lastRunLocalDate?.() ?? null;
-      if (lastRunDate !== date) {
-        pending.push(run('disclosure', `disclosure:${date}`));
-      } else if (dependencies.disclosure.lastRunStatus?.() === 'stale' && minute >= 19 * 60) {
+      const scheduledKey = `disclosure:${date}`;
+      const hasScheduledRun = dependencies.disclosure.hasRun?.(scheduledKey)
+        ?? (dependencies.disclosure.lastRunLocalDate?.() === date);
+      if (!hasScheduledRun) {
+        pending.push(run('disclosure', scheduledKey));
+      } else if (['stale', 'degraded'].includes(dependencies.disclosure.lastRunStatus?.() ?? '') && minute >= 19 * 60) {
         const retryKey = `disclosure:${date}:retry-19`;
         if (!dependencies.disclosure.hasRun?.(retryKey)) pending.push(run('disclosure', retryKey));
       }

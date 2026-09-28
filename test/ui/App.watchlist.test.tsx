@@ -13,7 +13,7 @@ const company = {
 
 function setupApi() {
   let rows = [company];
-  const materialEvents = [{
+  let materialEvents = [{
     id: 'event-2', companyId: 'company-1', market: 'TWSE' as const, stockCode: '2330', companyName: '台積電',
     title: '營收更正公告', content: '更正後完整公告內容', source: 'mops', sourceUrl: 'https://mops.example/event-2',
     publishedAt: '2026-09-26T09:30:00.000Z', discoveredAt: '2026-09-26T09:35:00.000Z', eventType: 'correction',
@@ -29,7 +29,7 @@ function setupApi() {
     publishedAt: '2026-09-26T08:30:00.000Z', discoveredAt: '2026-09-26T08:35:00.000Z', eventType: 'announcement',
     revisionOf: null, readAt: null,
   }];
-  let notificationRouteListener: ((route: { type: 'event-detail'; eventId: string } | { type: 'event-list'; eventIds: string[] } | { type: 'source-status' } | { type: 'disclosure-list' }) => void) | undefined;
+  let notificationRouteListener: ((route: { type: 'event-detail'; eventId: string } | { type: 'event-list'; eventIds: string[] } | { type: 'source-status' } | { type: 'disclosure-list' } | { type: 'test-notification' }) => void) | undefined;
   let scheduleSettings = {
     monitoring: { enabled: true, start: '00:00', end: '00:00', intervalMinutes: 60 as const },
     disclosure: { enabled: true, runAt: '18:30' },
@@ -64,6 +64,8 @@ function setupApi() {
     saveScheduleSettings: vi.fn(async (value) => { scheduleSettings = value; return value; }),
     getScheduleStatus: vi.fn(async () => scheduleStatus),
     runScheduledCheck: vi.fn(async () => ({ status: 'started' })),
+    sendTestNotification: vi.fn(async () => ({ status: 'suppressed' as const })),
+    scheduleTestNotification: vi.fn(async () => ({ status: 'scheduled' as const, scheduledAt: '2026-09-28T00:01:00.000Z' })),
     exportUserData: vi.fn(async () => ({ status: 'cancelled' as const })),
     getLoginStartupSettings: vi.fn(async () => loginStartupSettings),
     saveLoginStartupSettings: vi.fn(async (value) => { loginStartupSettings = value; return value; }),
@@ -107,6 +109,7 @@ function setupApi() {
       event.readAt = '2026-09-26T10:00:00.000Z';
       return event;
     }),
+    softDeleteMaterialEvent: vi.fn(async (id) => { materialEvents = materialEvents.filter((event) => event.id !== id); }),
   };
   Object.defineProperty(window, 'reporterApi', { configurable: true, value: api });
   Object.defineProperty(window, 'sendReporterNotificationRoute', { configurable: true, value: (route: Parameters<NonNullable<typeof notificationRouteListener>>[0]) => notificationRouteListener?.(route) });
@@ -231,6 +234,23 @@ describe('watchlist-management / UI', () => {
     expect(api.listConferences).toHaveBeenCalled();
   });
 
+  it('conference-calendar-sync / UI / updates to disconnected even when remote revocation is unconfirmed', async () => {
+    const api = setupApi();
+    let status: 'connected' | 'disconnected' = 'connected';
+    api.getGoogleCalendarStatus = vi.fn(async () => ({ status }));
+    api.disconnectGoogleCalendar = vi.fn(async () => {
+      status = 'disconnected';
+      throw new Error('本機已中斷 Google Calendar，但 Google 端撤銷未確認');
+    });
+    render(<App />);
+    await userEvent.click(screen.getByRole('tab', { name: '法說會' }));
+    await userEvent.click(await screen.findByRole('button', { name: '中斷 Google Calendar' }));
+
+    expect(await screen.findByText('尚未連線')).toBeVisible();
+    expect(screen.getByText(/本機已中斷 Google Calendar，但 Google 端撤銷未確認/)).toBeVisible();
+    expect(screen.getByRole('button', { name: '連線 Google Calendar' })).toBeVisible();
+  });
+
   it('conference-calendar-sync / first connection / lets the user start OAuth without importing a client JSON file', async () => {
     const api = setupApi();
     api.getGoogleCalendarStatus = vi.fn(async () => ({ status: 'not-configured' }));
@@ -329,6 +349,28 @@ describe('watchlist-management / UI', () => {
     expect(await screen.findByText('違約交割官方資料尚未更新。')).toBeVisible();
   });
 
+  it('distinguishes a degraded material check from failure and shows the source record count', async () => {
+    const api = setupApi();
+    const initial = await api.getScheduleStatus() as { material: Record<string, unknown> };
+    api.getScheduleStatus = vi.fn()
+      .mockResolvedValueOnce(initial)
+      .mockResolvedValue({ ...initial, material: { ...initial.material, status: 'degraded', errorMessage: null } });
+    api.getMaterialMonitorStatus = vi.fn(async () => ({
+      status: 'degraded', finishedAt: '2026-09-26T11:00:00.000Z', errorMessage: '官網查詢可能漏筆',
+      sources: [{ source: 'MOPS', status: 'degraded', dataDate: '2026-09-26', recordCount: 8, errorMessage: null }],
+    }));
+
+    render(<App />);
+    await userEvent.click(screen.getByRole('tab', { name: '設定' }));
+    await userEvent.click(await screen.findByRole('button', { name: '立即檢查重大訊息' }));
+    expect(await screen.findByText('重大訊息來源部分降級；資料可能不完整，請查看已保存公告與來源狀態。')).toBeVisible();
+    expect(screen.queryByText('重大訊息部分來源檢查失敗，請查看最新狀態。')).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: '查看重大訊息與來源狀態' }));
+    expect(await screen.findByRole('heading', { name: '重大訊息', level: 2 })).toBeVisible();
+    expect(screen.getByText('MOPS：部分降級（資料日期 2026-09-26，來源回傳 8 筆）')).toBeVisible();
+  });
+
   it('shows that isolated mode cannot run live checks instead of offering ineffective buttons', async () => {
     const api = setupApi();
     const status = await api.getScheduleStatus();
@@ -341,6 +383,52 @@ describe('watchlist-management / UI', () => {
     expect(screen.getByRole('button', { name: '立即檢查重大訊息' })).toBeDisabled();
     expect(screen.getByRole('button', { name: '立即檢查違約交割' })).toBeDisabled();
     expect(api.runScheduledCheck).not.toHaveBeenCalled();
+  });
+
+  it('notification-delivery / test notification UI / shows native request status and isolated suppression', async () => {
+    const api = setupApi();
+    render(<App />);
+    await userEvent.click(screen.getByRole('tab', { name: '設定' }));
+    const button = await screen.findByRole('button', { name: '發送測試通知' });
+    await userEvent.click(button);
+    expect(await screen.findByText('隔離測試模式不顯示 Windows 通知。')).toBeVisible();
+    expect(api.sendTestNotification).toHaveBeenCalledOnce();
+
+    vi.mocked(api.sendTestNotification).mockResolvedValueOnce({ status: 'requested' });
+    await userEvent.click(button);
+    expect(await screen.findByText('Windows 已接受測試通知顯示要求；若未看到，請檢查系統通知設定。')).toBeVisible();
+
+    vi.mocked(api.sendTestNotification).mockRejectedValueOnce(new Error('系統通知不可用'));
+    await userEvent.click(button);
+    expect(await screen.findByText('測試通知失敗：系統通知不可用')).toHaveAttribute('role', 'alert');
+  });
+
+  it('notification-delivery / delayed test notification UI / schedules one minute later and explains the tray test', async () => {
+    const api = setupApi();
+    render(<App />);
+    await userEvent.click(screen.getByRole('tab', { name: '設定' }));
+    await userEvent.click(await screen.findByRole('button', { name: '一分鐘後發送測試通知' }));
+    expect(api.scheduleTestNotification).toHaveBeenCalledOnce();
+    expect(await screen.findByText(/已排定.*關閉視窗.*系統匣/)).toBeVisible();
+  });
+
+  it('monitoring-schedule / settings UI / explains that the interval is measured from the last check, not clock quarter-hours', async () => {
+    setupApi();
+    render(<App />);
+    await userEvent.click(screen.getByRole('tab', { name: '設定' }));
+    expect(await screen.findByText(/距離上次檢查.*不是固定在整點/)).toBeVisible();
+    expect(screen.getByText(/沒有新公告時不會發送重大訊息通知/)).toBeVisible();
+  });
+
+  it('notification-delivery / test notification UI / returns to settings on a test toast click', async () => {
+    setupApi();
+    render(<App />);
+    await userEvent.click(screen.getByRole('tab', { name: '重大訊息' }));
+    (window as Window & { sendReporterNotificationRoute: (route: { type: 'test-notification' }) => void })
+      .sendReporterNotificationRoute({ type: 'test-notification' });
+
+    expect(await screen.findByRole('heading', { name: '監控排程', level: 2 })).toBeVisible();
+    expect(await screen.findByText('已從測試通知返回設定。')).toBeVisible();
   });
 
   it('shows immediate progress beside the selected job while an actual check is pending', async () => {
@@ -487,6 +575,40 @@ describe('watchlist-management / UI', () => {
       .queryByRole('complementary')).not.toBeInTheDocument();
   });
 
+  it('material-event-monitoring / soft delete UI / requires confirmation and removes only the chosen row', async () => {
+    const api = setupApi();
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValueOnce(true);
+    render(<App />);
+    await userEvent.click(screen.getByRole('tab', { name: '重大訊息' }));
+    await userEvent.click(await screen.findByRole('button', { name: /台積電 營收更正公告/ }));
+    const button = await screen.findByRole('button', { name: '刪除此筆本機公告' });
+    await userEvent.click(button);
+    expect(confirm).toHaveBeenCalledOnce();
+    expect(api.softDeleteMaterialEvent).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: /台積電 營收更正公告/ })).toBeVisible();
+    await userEvent.click(button);
+    expect(api.softDeleteMaterialEvent).toHaveBeenCalledWith('event-2');
+    await waitFor(() => expect(screen.queryByRole('button', { name: /台積電 營收更正公告/ })).not.toBeInTheDocument());
+    expect(screen.getByRole('button', { name: /台積電 營運報告/ })).toBeVisible();
+    expect(screen.getByRole('status', { name: '重大訊息操作結果' })).toHaveTextContent('已從本機清單移除');
+  });
+
+  it('material-event-monitoring / soft delete UI / prevents a duplicate request while deletion is pending', async () => {
+    const api = setupApi();
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    let complete: (() => void) | undefined;
+    vi.mocked(api.softDeleteMaterialEvent).mockImplementation(() => new Promise((resolve) => { complete = () => resolve(undefined); }));
+    render(<App />);
+    await userEvent.click(screen.getByRole('tab', { name: '重大訊息' }));
+    await userEvent.click(await screen.findByRole('button', { name: /台積電 營收更正公告/ }));
+    const button = await screen.findByRole('button', { name: '刪除此筆本機公告' });
+    await userEvent.click(button);
+    expect(button).toBeDisabled();
+    await userEvent.click(button);
+    expect(api.softDeleteMaterialEvent).toHaveBeenCalledOnce();
+    complete?.();
+  });
+
   it('stops loading and reports a detail retrieval error in the clicked row', async () => {
     const api = setupApi();
     vi.mocked(api.getMaterialEvent).mockRejectedValueOnce(new Error('公告詳情暫時無法取得'));
@@ -556,6 +678,16 @@ describe('watchlist-management / UI', () => {
 describe('desktop-app-lifecycle / login startup UI', () => {
   afterEach(() => cleanup());
 
+  it('persists a login-startup toggle immediately so a checked control is not mistaken for a saved setting', async () => {
+    const api = setupApi();
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(screen.getByRole('tab', { name: '設定' }));
+    await user.click(await screen.findByRole('checkbox', { name: '登入 Windows 時啟動' }));
+    await waitFor(() => expect(api.saveLoginStartupSettings).toHaveBeenCalledWith({ enabled: true, startHidden: false }));
+    expect(await screen.findByText('登入啟動設定已儲存。')).toBeVisible();
+  });
+
   it('loads, enables and saves login launch and hidden-start preferences', async () => {
     const api = setupApi();
     const user = userEvent.setup();
@@ -563,8 +695,20 @@ describe('desktop-app-lifecycle / login startup UI', () => {
     await user.click(screen.getByRole('tab', { name: '設定' }));
     expect(await screen.findByLabelText('登入 Windows 時啟動')).toBeVisible();
     await user.click(screen.getByLabelText('登入 Windows 時啟動'));
+    await waitFor(() => expect(api.saveLoginStartupSettings).toHaveBeenCalledWith({ enabled: true, startHidden: false }));
+    await waitFor(() => expect(screen.getByLabelText('啟動後縮到系統匣')).toBeEnabled());
     await user.click(screen.getByLabelText('啟動後縮到系統匣'));
-    await user.click(screen.getByRole('button', { name: '儲存登入啟動設定' }));
     await waitFor(() => expect(api.saveLoginStartupSettings).toHaveBeenCalledWith({ enabled: true, startHidden: true }));
+  });
+
+  it('keeps the login-startup toggle off and reports an OS save failure', async () => {
+    const api = setupApi();
+    api.saveLoginStartupSettings.mockRejectedValueOnce(new Error('Windows 登入啟動未生效'));
+    render(<App />);
+    await userEvent.click(screen.getByRole('tab', { name: '設定' }));
+    const toggle = await screen.findByRole('checkbox', { name: '登入 Windows 時啟動' });
+    await userEvent.click(toggle);
+    expect(await screen.findByText('登入啟動設定失敗：Windows 登入啟動未生效')).toBeVisible();
+    expect(toggle).not.toBeChecked();
   });
 });

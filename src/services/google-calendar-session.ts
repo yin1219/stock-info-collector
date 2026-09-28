@@ -135,12 +135,20 @@ export function createGoogleCalendarSession(dependencies: GoogleCalendarSessionD
     async disconnect(): Promise<void> {
       const current = await load();
       if (!current) return;
+      let revocationFailure: unknown;
       if (current.tokens) {
         const client = dependencies.createClient(current.client);
         client.setCredentials(current.tokens);
-        await client.revokeCredentials();
+        try {
+          await client.revokeCredentials();
+        } catch (error) {
+          if (!(error instanceof Error && error.message === 'invalid_token')) revocationFailure = error;
+        }
       }
       await save({ ...current, tokens: null, reauthorizationRequired: false });
+      if (revocationFailure) {
+        throw new Error('本機已中斷 Google Calendar，但 Google 端撤銷未確認；請至 Google 帳戶權限頁檢查', { cause: revocationFailure });
+      }
     },
 
     async getAuthorizedClient(): Promise<GoogleOAuthSessionPort> {

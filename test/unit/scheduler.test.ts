@@ -27,6 +27,25 @@ describe('monitoring-schedule / scheduler / runs due jobs in Taipei time', () =>
 });
 
 describe('monitoring-schedule / catch-up / does not replay every missed interval', () => {
+  it('starts exactly one overdue in-window check on startup or resume', async () => {
+    let lastCheckedAt = time('2026-09-25T01:00:00.000Z');
+    const keys: string[] = [];
+    const now = time('2026-09-26T02:30:00.000Z'); // 10:30 Taipei
+    const scheduler = createMonitoringScheduler({
+      now: () => now,
+      monitoring: {
+        enabled: true, start: '10:00', end: '17:00', intervalMinutes: 15,
+        lastCheckedAt: () => lastCheckedAt,
+        run: async (key) => { keys.push(key); lastCheckedAt = now; },
+      },
+      disclosure: { enabled: false, runAt: '18:30', lastSuccessfulLocalDate: () => null, run: async () => undefined },
+    });
+
+    await expect(scheduler.catchUp()).resolves.toHaveLength(1);
+    await expect(scheduler.catchUp()).resolves.toEqual([]);
+    expect(keys).toHaveLength(1);
+  });
+
   it('runs one overdue check and does nothing while disabled or outside the configured window', async () => {
     let calls = 0;
     const scheduler = createMonitoringScheduler({
@@ -123,6 +142,25 @@ describe('monitoring-schedule / settings / applies updates without restarting th
 });
 
 describe('default-disclosure-monitoring / stale retry / runs once at 19:00 only after stale data', () => {
+  it('still runs the scheduled 18:30 check after an earlier manual stale result', async () => {
+    const keys = new Set<string>(['disclosure:2026-09-26:manual:earlier']);
+    const scheduler = createMonitoringScheduler({
+      now: () => time('2026-09-26T10:30:00.000Z'), // 18:30 Taipei
+      monitoring: { enabled: false, start: '00:00', end: '00:00', intervalMinutes: 60,
+        lastCheckedAt: () => null, run: async () => undefined },
+      disclosure: {
+        enabled: true, runAt: '18:30', lastSuccessfulLocalDate: () => null,
+        lastRunLocalDate: () => '2026-09-26', lastRunStatus: () => 'stale',
+        hasRun: (key) => keys.has(key),
+        run: async (key) => { keys.add(key); },
+      },
+    });
+
+    await expect(scheduler.tick()).resolves.toMatchObject([{ kind: 'disclosure', idempotencyKey: 'disclosure:2026-09-26' }]);
+    await expect(scheduler.tick()).resolves.toEqual([]);
+    expect(keys).toContain('disclosure:2026-09-26');
+  });
+
   it('uses a distinct retry key and never repeats an already-created retry', async () => {
     let calls = 0;
     let retryExists = false;
@@ -135,7 +173,8 @@ describe('default-disclosure-monitoring / stale retry / runs once at 19:00 only 
       disclosure: {
         enabled: true, runAt: '18:30', lastSuccessfulLocalDate: () => null,
         lastRunLocalDate: () => '2026-09-26', lastRunStatus: () => 'stale',
-        hasRun: (key) => retryExists && key === 'disclosure:2026-09-26:retry-19',
+        hasRun: (key) => key === 'disclosure:2026-09-26'
+          || (retryExists && key === 'disclosure:2026-09-26:retry-19'),
         run: async (key) => { calls += 1; expect(key).toBe('disclosure:2026-09-26:retry-19'); retryExists = true; },
       },
     });
@@ -143,5 +182,26 @@ describe('default-disclosure-monitoring / stale retry / runs once at 19:00 only 
     await expect(scheduler.tick()).resolves.toMatchObject([{ kind: 'disclosure', status: 'started' }]);
     await expect(scheduler.tick()).resolves.toEqual([]);
     expect(calls).toBe(1);
+  });
+});
+
+describe('default-disclosure-monitoring / degraded retry / recovers a partially failed market', () => {
+  it('retries once at 19:00 when the first daily run was degraded', async () => {
+    const keys: string[] = [];
+    const scheduler = createMonitoringScheduler({
+      now: () => time('2026-09-26T11:00:00.000Z'), // 19:00 Taipei
+      monitoring: { enabled: false, start: '00:00', end: '00:00', intervalMinutes: 60,
+        lastCheckedAt: () => null, run: async () => undefined },
+      disclosure: {
+        enabled: true, runAt: '18:30', lastSuccessfulLocalDate: () => null,
+        lastRunLocalDate: () => '2026-09-26', lastRunStatus: () => 'degraded',
+        hasRun: (key) => key === 'disclosure:2026-09-26' || keys.includes(key),
+        run: async (key) => { keys.push(key); },
+      },
+    });
+
+    await expect(scheduler.tick()).resolves.toMatchObject([{ kind: 'disclosure', status: 'started' }]);
+    await expect(scheduler.tick()).resolves.toEqual([]);
+    expect(keys).toEqual(['disclosure:2026-09-26:retry-19']);
   });
 });

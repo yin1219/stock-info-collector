@@ -5,6 +5,7 @@ const dataTables = [
   'companies',
   'watchlist_entries',
   'material_events',
+  'material_event_deletion_audit',
   'default_disclosures',
   'conferences',
   'calendar_syncs',

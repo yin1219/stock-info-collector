@@ -8,7 +8,8 @@ export type ReporterRoute =
   | { type: 'event-detail'; eventId: string }
   | { type: 'event-list'; eventIds: string[] }
   | { type: 'source-status' }
-  | { type: 'disclosure-list' };
+  | { type: 'disclosure-list' }
+  | { type: 'test-notification' };
 
 export interface ScheduleSettings {
   monitoring: { enabled: boolean; start: string; end: string; intervalMinutes: 15 | 30 | 60 | 120 };
@@ -19,6 +20,7 @@ export interface ScheduleSettings {
 export interface LoginStartupSettings {
   enabled: boolean;
   startHidden: boolean;
+  blockedByWindows?: boolean;
 }
 
 export type GoogleCalendarStatus = { status: 'not-configured' | 'disconnected' | 'connected' | 'reauthorization-required' };
@@ -30,7 +32,7 @@ function isReporterRoute(value: unknown): value is ReporterRoute {
   if (route.type === 'event-detail') return typeof route.eventId === 'string' && route.eventId.length > 0;
   if (route.type === 'event-list') return Array.isArray(route.eventIds) && route.eventIds.every((id) => typeof id === 'string' && id.length > 0);
   if (route.type === 'source-status') return true;
-  return route.type === 'disclosure-list';
+  return route.type === 'disclosure-list' || route.type === 'test-notification';
 }
 
 export interface ReporterApi {
@@ -47,11 +49,14 @@ export interface ReporterApi {
   listMaterialEvents(filter?: { query?: string; unreadOnly?: boolean; watchedOnly?: boolean; eventIds?: string[] }): Promise<unknown>;
   getMaterialEvent(id: string): Promise<unknown>;
   markMaterialEventRead(id: string): Promise<unknown>;
+  softDeleteMaterialEvent(id: string): Promise<unknown>;
   getMaterialMonitorStatus(): Promise<unknown>;
   getScheduleSettings(): Promise<ScheduleSettings>;
   saveScheduleSettings(settings: ScheduleSettings): Promise<ScheduleSettings>;
   getScheduleStatus(): Promise<unknown>;
   runScheduledCheck(kind: 'material' | 'disclosure'): Promise<unknown>;
+  sendTestNotification(): Promise<{ status: 'requested' | 'suppressed' }>;
+  scheduleTestNotification(): Promise<{ status: 'scheduled'; scheduledAt: string } | { status: 'suppressed' }>;
   exportUserData(): Promise<DataExportResult>;
   getLoginStartupSettings(): Promise<LoginStartupSettings>;
   saveLoginStartupSettings(settings: LoginStartupSettings): Promise<LoginStartupSettings>;
@@ -80,11 +85,14 @@ export function createReporterApi(version: string, ipc: IpcInvoker): ReporterApi
     listMaterialEvents: (filter = {}) => ipc.invoke('material-events:list', filter),
     getMaterialEvent: (id) => ipc.invoke('material-events:detail', { id }),
     markMaterialEventRead: (id) => ipc.invoke('material-events:mark-read', { id }),
+    softDeleteMaterialEvent: (id) => ipc.invoke('material-events:soft-delete', { id }),
     getMaterialMonitorStatus: () => ipc.invoke('material-events:status'),
     getScheduleSettings: () => ipc.invoke('schedule:get-settings') as Promise<ScheduleSettings>,
     saveScheduleSettings: (settings) => ipc.invoke('schedule:save-settings', settings) as Promise<ScheduleSettings>,
     getScheduleStatus: () => ipc.invoke('schedule:get-status'),
     runScheduledCheck: (kind) => ipc.invoke('schedule:run-now', { kind }),
+    sendTestNotification: () => ipc.invoke('notification:send-test') as Promise<{ status: 'requested' | 'suppressed' }>,
+    scheduleTestNotification: () => ipc.invoke('notification:schedule-test') as Promise<{ status: 'scheduled'; scheduledAt: string } | { status: 'suppressed' }>,
     exportUserData: () => ipc.invoke('data:export') as Promise<DataExportResult>,
     getLoginStartupSettings: () => ipc.invoke('desktop:get-login-startup') as Promise<LoginStartupSettings>,
     saveLoginStartupSettings: (settings) => ipc.invoke('desktop:save-login-startup', settings) as Promise<LoginStartupSettings>,

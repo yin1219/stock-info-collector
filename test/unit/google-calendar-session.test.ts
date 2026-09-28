@@ -154,4 +154,26 @@ describe('conference-calendar-sync / secure Google Calendar session', () => {
     expect(client.revokeCredentials).toHaveBeenCalledOnce();
     await expect(session.getStatus()).resolves.toEqual({ status: 'disconnected' });
   });
+
+  it('clears the local authorization when Google says the token is already invalid', async () => {
+    const { session, client } = setup();
+    await session.configure({ installed: { client_id: 'client-id', client_secret: 'client-secret', redirect_uris: ['http://localhost'] } });
+    await session.connect();
+    client.revokeCredentials.mockRejectedValueOnce(new Error('invalid_token'));
+
+    await expect(session.disconnect()).resolves.toBeUndefined();
+    await expect(session.getStatus()).resolves.toEqual({ status: 'disconnected' });
+    await expect(session.getAuthorizedClient()).rejects.toThrow('需要重新授權');
+  });
+
+  it('clears the local authorization but reports an unconfirmed remote revocation', async () => {
+    const { session, client } = setup();
+    await session.configure({ installed: { client_id: 'client-id', client_secret: 'client-secret', redirect_uris: ['http://localhost'] } });
+    await session.connect();
+    client.revokeCredentials.mockRejectedValueOnce(new Error('network unavailable'));
+
+    await expect(session.disconnect()).rejects.toThrow('本機已中斷 Google Calendar，但 Google 端撤銷未確認');
+    await expect(session.getStatus()).resolves.toEqual({ status: 'disconnected' });
+    await expect(session.getAuthorizedClient()).rejects.toThrow('需要重新授權');
+  });
 });
