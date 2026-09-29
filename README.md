@@ -35,7 +35,7 @@
 
 程式邊界：`src/main/` 管視窗、排程及可信 IPC；`src/preload/` 只暴露允許的呼叫；`src/renderer/` 是 React UI；`src/domain/` 放規則；`src/providers/` 解析外部來源；`src/services/` 串流程；`src/repositories/` 管 SQLite schema、migration 與查詢。`test/` 依 unit、integration、ui、e2e 分層；`openspec/changes/build-stock-reporter-assistant-v2/` 是 v2 需求來源。
 
-重大訊息來源可能回報 `degraded`：這代表有可用資料但不能保證完整，不能把「官網當下回覆查無」或備援 RSS 404 說成全市場確定零筆。每日 TWSE／TPEX 對帳可補回關注公司漏接的公告；通知只針對啟用中的關注公司。違約交割是全市場揭露；`stale`／`failed`／`degraded` 與有效零筆必須分開顯示。背景排程在正式模式啟動、每分鐘輪詢並處理喚醒補查；同類工作不重疊，通知失敗不刪已保存資料。
+重大訊息來源可能回報 `degraded`：這代表有可用資料但不能保證完整，不能把「官網當下回覆查無」或備援 RSS 404 說成全市場確定零筆。每日 TWSE／TPEX 對帳可補回關注公司漏接的公告；對帳的「出表日期」判斷資料批次是否更新，單筆公告則用「發言日期／時間」顯示發布時間與去重，兩者不可混用。通知只針對啟用中的關注公司。違約交割是全市場揭露；`stale`／`failed`／`degraded` 與有效零筆必須分開顯示。背景排程在正式模式啟動、每分鐘輪詢並處理喚醒補查；同類工作不重疊，通知失敗不刪已保存資料。
 
 ## 開發環境與常用指令
 

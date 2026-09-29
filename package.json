@@ -1,6 +1,6 @@
 {
   "name": "stock-info-collector",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "description": "供財經記者使用的本機市場資訊監控與行事曆小幫手",
   "main": ".vite/build/main.js",
   "productName": "股市記者小幫手",

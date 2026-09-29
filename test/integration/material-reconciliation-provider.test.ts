@@ -34,11 +34,30 @@ describe('material-event-monitoring / provider contract / daily reconciliation p
 
     await expect(twse.fetchForDate('2026-09-27')).resolves.toMatchObject({
       dataDate: '2026-09-27',
-      events: [{ stockCode: '2330', publishedAt: '2026-09-26T23:00:03.000Z' }],
+      events: [{ stockCode: '2330', publishedAt: '2026-09-25T23:00:03.000Z' }],
     });
     await expect(tpex.fetchForDate('2026-09-26')).resolves.toMatchObject({
       dataDate: '2026-09-26',
-      events: [{ stockCode: '6488', publishedAt: '2026-09-25T23:00:03.000Z' }],
+      events: [{ stockCode: '6488', publishedAt: '2026-09-24T23:00:03.000Z' }],
     });
+  });
+
+  it('keeps the same source identity when a later report date carries the same earlier announcement', async () => {
+    const announcement = {
+      發言日期: '1150926', 發言時間: '70003', 公司代號: '2330', 公司名稱: '測試公司',
+      '主旨 ': '重大訊息範例', 說明: '公開內容範例',
+    };
+    const first = createMaterialReconciliationProvider(new FakeHttpClient({
+      'fixture://twse/first': [{ ...announcement, 出表日期: '1150927' }],
+    }), 'TWSE', 'fixture://twse/first');
+    const later = createMaterialReconciliationProvider(new FakeHttpClient({
+      'fixture://twse/later': [{ ...announcement, 出表日期: '1150928' }],
+    }), 'TWSE', 'fixture://twse/later');
+
+    const firstResult = await first.fetchForDate('2026-09-27');
+    const laterResult = await later.fetchForDate('2026-09-28');
+    expect(firstResult.events[0].publishedAt).toBe('2026-09-25T23:00:03.000Z');
+    expect(laterResult.events[0].publishedAt).toBe(firstResult.events[0].publishedAt);
+    expect(laterResult.events[0].sourceKey).toBe(firstResult.events[0].sourceKey);
   });
 });

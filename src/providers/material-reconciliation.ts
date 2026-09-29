@@ -68,6 +68,7 @@ export function createMaterialReconciliationProvider(
       const normalized = rows.map((raw) => {
         const row = recordValue(raw);
         const date = normalizeDate(pick(row, rowDateAliases));
+        const announcedDate = normalizeDate(pick(row, ['發言日期']) || pick(row, rowDateAliases));
         const stockCode = pick(row, codeAliases);
         const companyName = pick(row, ['公司名稱', '公司簡稱', 'CompanyName', 'CompanyAbbreviation']) || stockCode;
         const title = pick(row, titleAliases);
@@ -76,11 +77,11 @@ export function createMaterialReconciliationProvider(
         if (!/^\d{4,6}$/.test(stockCode) || !title || !content) throw new Error(`${market} 結構化重大訊息缺少股票代號、主旨或內容`);
         const sequence = pick(row, ['序號', '流水號', '編號', 'seq', 'id']);
         const sourceUrl = pick(row, ['連結', '網址', 'link', 'url']) || `https://mops.twse.com.tw/mops/web/t05sr01_1?stock=${stockCode}`;
-        const fingerprint = createHash('sha256').update(`${market}|${stockCode}|${date}|${time}|${title}|${content}`).digest('hex');
+        const fingerprint = createHash('sha256').update(`${market}|${stockCode}|${announcedDate}|${time}|${title}|${content}`).digest('hex');
         const sourceKey = sequence ? `${market.toLowerCase()}:${sequence}` : `${market.toLowerCase()}:${fingerprint}`;
         const event: MaterialSourceRecord = {
           source: market === 'TWSE' ? 'twse' : 'tpex', market, stockCode, companyName,
-          publishedAt: normalizeInstant(date, time), title, content, sourceKey, sourceUrl, revisionOf: null,
+          publishedAt: normalizeInstant(announcedDate, time), title, content, sourceKey, sourceUrl, revisionOf: null,
         };
         return { date, event };
       });

@@ -108,6 +108,15 @@ test('windows-distribution / upgrade / increments beyond installed 1.0.5 for cal
   assert.equal(lock.packages[''].version, packageJson.version);
 });
 
+test('windows-distribution / upgrade / advances beyond 1.0.6 for corrected reconciliation announcement timestamps', async () => {
+  const packageJson = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
+  const lock = JSON.parse(await readFile(path.join(root, 'package-lock.json'), 'utf8'));
+  const [major, minor, patch] = packageJson.version.split('.').map(Number);
+  assert.ok(major > 1 || (major === 1 && (minor > 0 || patch > 6)));
+  assert.equal(lock.version, packageJson.version);
+  assert.equal(lock.packages[''].version, packageJson.version);
+});
+
 test('material-event-monitoring / live source / uses dated MOPS website search as a degraded source', async () => {
   const main = await readFile(path.join(root, 'src/main/main.ts'), 'utf8');
   assert.match(main, /primary:\s*createMopsSearchMaterialProvider\(http\)/);
