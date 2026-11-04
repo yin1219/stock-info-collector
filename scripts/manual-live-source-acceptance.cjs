@@ -68,11 +68,25 @@ async function completedJob(databasePath, kind) {
     const disclosure = await completedJob(databasePath, 'default-disclosure-monitoring');
     const reconciliation = await completedJob(databasePath, 'material-event-reconciliation');
 
+    const saved = new Database(databasePath, { readonly: true, fileMustExist: true });
+    let materialPersistence;
+    let backfillSaved = null;
+    try {
+      materialPersistence = saved.prepare('SELECT COUNT(*) AS count, SUM(CASE WHEN length(content) > length(title) THEN 1 ELSE 0 END) AS fullContentCount FROM material_events').get();
+      if (canaryWatchCode) {
+        backfillSaved = saved.prepare("SELECT COUNT(*) AS count FROM material_events WHERE company_id = ? AND source = 'tpex-reconciliation'")
+          .get(`canary-company-${canaryWatchCode}`).count;
+      }
+    } finally {
+      saved.close();
+    }
+
     await mkdir(output, { recursive: true });
     await window.getByRole('tab', { name: '重大訊息' }).click();
     const watchedListCount = await window.locator('.material-list .material-row').count();
     await window.getByRole('checkbox', { name: '顯示全部公告' }).check();
-    await window.getByText(/全部 \d+ 筆/).waitFor();
+    await window.waitForFunction((expected) => document.querySelectorAll('.material-list .material-row').length === expected,
+      materialPersistence.count, { timeout: 10_000 });
     const materialListCount = await window.locator('.material-list .material-row').count();
     const backfillVisible = canaryWatchCode
       ? await window.locator('.material-list .material-row').filter({ hasText: canaryWatchCode }).count()
@@ -86,18 +100,6 @@ async function completedJob(databasePath, kind) {
         textLength: (await panel.innerText()).length,
         officialLink: (await panel.getByRole('link', { name: '開啟來源公告' }).getAttribute('href'))?.startsWith('https://mopsov.twse.com.tw/') ?? false,
       };
-    }
-    const saved = new Database(databasePath, { readonly: true, fileMustExist: true });
-    let materialPersistence;
-    let backfillSaved = null;
-    try {
-      materialPersistence = saved.prepare('SELECT COUNT(*) AS count, SUM(CASE WHEN length(content) > length(title) THEN 1 ELSE 0 END) AS fullContentCount FROM material_events').get();
-      if (canaryWatchCode) {
-        backfillSaved = saved.prepare("SELECT COUNT(*) AS count FROM material_events WHERE company_id = ? AND source = 'tpex-reconciliation'")
-          .get(`canary-company-${canaryWatchCode}`).count;
-      }
-    } finally {
-      saved.close();
     }
     await window.screenshot({ path: path.join(output, 'material.png'), fullPage: true });
     await window.getByRole('tab', { name: '違約交割' }).click();

@@ -1,5 +1,6 @@
 const { access, readdir, readFile } = require('node:fs/promises');
 const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
@@ -36,6 +37,77 @@ test('desktop-app-lifecycle / shell / contains isolated main, preload and render
     'src/renderer/index.html',
     'src/renderer/main.tsx',
   ].map((relativePath) => access(path.join(root, relativePath))));
+});
+
+test('desktop-app-lifecycle / login startup defaults / only initializes a new formal profile', async () => {
+  const main = await readFile(path.join(root, 'src/main/main.ts'), 'utf8');
+  assert.match(main, /const isNewProfile = !existsSync\(databasePath\)/);
+  assert.match(main, /isNewProfile && !process\.env\.REPORTER_USER_DATA_DIR/);
+  assert.match(main, /loginStartup\.applyNewProfileDefaults\(\)/);
+});
+
+test('desktop-app-lifecycle / development preview launcher / offers an Explorer entry with isolated data', async () => {
+  const cmd = await readFile(path.join(root, 'scripts/launch-dev-preview.cmd'), 'utf8');
+  const script = await readFile(path.join(root, 'scripts/launch-dev-preview.ps1'), 'utf8');
+  assert.ok([...script].every((character) => character.charCodeAt(0) < 128), 'Windows PowerShell 5.1 must parse the preview launcher without a UTF-8 BOM');
+  assert.match(cmd, /launch-dev-preview\.ps1/);
+  assert.match(script, /\$PSScriptRoot/);
+  assert.match(script, /REPORTER_USER_DATA_DIR/);
+  assert.match(script, /REPORTER_TEST_TRAY/);
+  assert.match(script, /npm(?:\.cmd)?/i);
+  assert.doesNotMatch(cmd, /EnableGoogleOAuth/);
+  assert.match(script, /if \(\$EnableGoogleOAuth\) \{ \$env:REPORTER_TEST_LIVE_OAUTH = '1' \}/);
+});
+
+test('desktop-app-lifecycle / development preview launcher / parses under Windows PowerShell 5.1', () => {
+  if (process.platform !== 'win32') return;
+  const result = spawnSync('powershell.exe', [
+    '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
+    path.join(root, 'scripts/launch-dev-preview.ps1'), '-ValidateOnly',
+  ], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /DEV_PREVIEW_LAUNCHER_OK/);
+});
+
+test('windows-distribution / conference task gateway / uses create-only Task Scheduler registration', async () => {
+  const scriptPath = path.join(root, 'scripts', 'conference-task.ps1');
+  const script = await readFile(scriptPath, 'utf8');
+  assert.ok([...script].every((character) => character.charCodeAt(0) < 128), 'PowerShell 5.1 gateway must remain ASCII without a BOM');
+  assert.match(script, /RegisterTaskDefinition\(\$TaskName,\s*\$definition,\s*2,/);
+  assert.match(script, /MultipleInstances\s*=\s*2/);
+  assert.match(script, /LogonType\s*=\s*3/);
+  assert.doesNotMatch(script, /UnregisterTask|TASK_CREATE_OR_UPDATE/i);
+  assert.match(script, /if \(\$Action -eq 'Remove'\)[\s\S]*\$folder\.DeleteTask\(\$TaskName, 0\)/);
+  assert.match(script, /\$taskAction\.Arguments -ne '\-\-processStart StockReporterAssistant\.exe \-\-process-start-args "\-\-conference-scheduled"'/);
+  if (process.platform !== 'win32') return;
+  const result = spawnSync('powershell.exe', [
+    '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', scriptPath, '-ValidateOnly',
+  ], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /CONFERENCE_TASK_GATEWAY_OK/);
+  assert.match(result.stdout, /CONFERENCE_TASK_MISSING_CODES_OK/);
+  assert.match(result.stdout, /CONFERENCE_TASK_SINGLE_WRITER_OK/);
+  assert.match(result.stdout, /CONFERENCE_TASK_DISABLED_LEGACY_OK/);
+});
+
+test('windows-distribution / conference task gateway / bundles the Task Scheduler script as a resource', async () => {
+  const createJiti = require('jiti');
+  const forge = (await createJiti(__filename).import(path.join(root, 'forge.config.ts'))).default;
+  assert.ok(forge.packagerConfig.extraResource?.some((item) =>
+    path.basename(item) === 'conference-task.ps1'));
+});
+
+test('conference-calendar-sync / packaged smoke / exercises the headless daily entry with isolated data', async () => {
+  const smoke = await readFile(path.join(root, 'scripts/packaged-windows-smoke.cjs'), 'utf8');
+  assert.match(smoke, /--conference-scheduled/);
+  assert.match(smoke, /conference-scheduled-not-ready/);
+  assert.match(smoke, /renderer-load-started/);
+});
+
+test('windows-distribution / uninstall / handles verified v2 task cleanup before shortcut removal without needing the app lock', async () => {
+  const main = await readFile(path.join(root, 'src/main/main.ts'), 'utf8');
+  assert.match(main, /cleanupConferenceTaskOnUninstall\(squirrelEvent/);
+  assert.match(main, /isSquirrelStartup\s*\?\s*false\s*:\s*app\.requestSingleInstanceLock\(\)/);
 });
 
 test('windows-distribution / installer / configures Squirrel per-user setup and handles Squirrel lifecycle events', async () => {
@@ -113,6 +185,42 @@ test('windows-distribution / upgrade / advances beyond 1.0.6 for corrected recon
   const lock = JSON.parse(await readFile(path.join(root, 'package-lock.json'), 'utf8'));
   const [major, minor, patch] = packageJson.version.split('.').map(Number);
   assert.ok(major > 1 || (major === 1 && (minor > 0 || patch > 6)));
+  assert.equal(lock.version, packageJson.version);
+  assert.equal(lock.packages[''].version, packageJson.version);
+});
+
+test('windows-distribution / upgrade / advances beyond installed 1.0.7 for the official conference redirect host', async () => {
+  const packageJson = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
+  const lock = JSON.parse(await readFile(path.join(root, 'package-lock.json'), 'utf8'));
+  const [major, minor, patch] = packageJson.version.split('.').map(Number);
+  assert.ok(major > 1 || (major === 1 && (minor > 0 || patch > 7)));
+  assert.equal(lock.version, packageJson.version);
+  assert.equal(lock.packages[''].version, packageJson.version);
+});
+
+test('windows-distribution / upgrade / advances beyond installed 1.0.8 for the bundled daily conference job', async () => {
+  const packageJson = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
+  const lock = JSON.parse(await readFile(path.join(root, 'package-lock.json'), 'utf8'));
+  const [major, minor, patch] = packageJson.version.split('.').map(Number);
+  assert.ok(major > 1 || (major === 1 && (minor > 0 || patch > 8)));
+  assert.equal(lock.version, packageJson.version);
+  assert.equal(lock.packages[''].version, packageJson.version);
+});
+
+test('windows-distribution / upgrade / advances beyond installed 1.0.10 for disabled-legacy Calendar acceptance', async () => {
+  const packageJson = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
+  const lock = JSON.parse(await readFile(path.join(root, 'package-lock.json'), 'utf8'));
+  const [major, minor, patch] = packageJson.version.split('.').map(Number);
+  assert.ok(major > 1 || (major === 1 && (minor > 0 || patch > 10)));
+  assert.equal(lock.version, packageJson.version);
+  assert.equal(lock.packages[''].version, packageJson.version);
+});
+
+test('windows-distribution / upgrade / advances beyond installed 1.0.11 for login startup defaults', async () => {
+  const packageJson = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
+  const lock = JSON.parse(await readFile(path.join(root, 'package-lock.json'), 'utf8'));
+  const [major, minor, patch] = packageJson.version.split('.').map(Number);
+  assert.ok(major > 1 || (major === 1 && (minor > 0 || patch > 11)));
   assert.equal(lock.version, packageJson.version);
   assert.equal(lock.packages[''].version, packageJson.version);
 });

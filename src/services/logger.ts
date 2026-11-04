@@ -4,24 +4,24 @@ import path from 'node:path';
 const sensitiveField = /token|secret|credential|password|authorization/i;
 const credentialValue = /\bBearer\s+[^\s,;]+|\b((?:access|refresh|oauth)?[_-]?token|client[_-]?secret|password|authorization(?:code)?)\s*[:=]\s*(?:Bearer\s+)?["']?[^\s,"';]+/gi;
 
-function redactString(value: string): string {
+export function redactSensitiveText(value: string): string {
   return value.replace(credentialValue, (_match, key: string | undefined) => key ? `${key}=[REDACTED]` : 'Bearer [REDACTED]');
 }
 
-function redact(value: unknown): unknown {
-  if (typeof value === 'string') return redactString(value);
+export function redactSensitiveData(value: unknown): unknown {
+  if (typeof value === 'string') return redactSensitiveText(value);
   if (value instanceof Error) {
     return {
       name: value.name,
-      message: redactString(value.message),
-      stack: value.stack && redactString(value.stack),
+      message: redactSensitiveText(value.message),
+      stack: value.stack && redactSensitiveText(value.stack),
     };
   }
-  if (Array.isArray(value)) return value.map(redact);
+  if (Array.isArray(value)) return value.map(redactSensitiveData);
   if (value && typeof value === 'object') {
     return Object.fromEntries(Object.entries(value).map(([key, nested]) => [
       key,
-      sensitiveField.test(key) ? '[REDACTED]' : redact(nested),
+      sensitiveField.test(key) ? '[REDACTED]' : redactSensitiveData(nested),
     ]));
   }
   return value;
@@ -38,8 +38,8 @@ export function createLogger(options: LoggerOptions) {
   const now = options.now ?? (() => new Date());
 
   function write(level: 'info' | 'error', event: string, fields: Record<string, unknown>): void {
-    const sanitizedFields = redact(fields) as Record<string, unknown>;
-    const line = JSON.stringify({ timestamp: now().toISOString(), level, event: redactString(event), ...sanitizedFields });
+    const sanitizedFields = redactSensitiveData(fields) as Record<string, unknown>;
+    const line = JSON.stringify({ timestamp: now().toISOString(), level, event: redactSensitiveText(event), ...sanitizedFields });
     appendFileSync(logFile, `${line}\n`, { encoding: 'utf8', mode: 0o600 });
   }
 

@@ -15,7 +15,7 @@ test('conference-calendar-sync / packaged OAuth client / copies only an explicit
     process.env.REPORTER_GOOGLE_OAUTH_CLIENT_FILE = clientPath;
     const createJiti = require('jiti');
     const forge = (await createJiti(__filename).import(path.join(root, 'forge.config.ts'))).default;
-    assert.deepEqual(forge.packagerConfig.extraResource, [clientPath]);
+    assert.deepEqual(forge.packagerConfig.extraResource, [path.join(root, 'scripts', 'conference-task.ps1'), clientPath]);
     const main = await readFile(path.join(root, 'src', 'main', 'main.ts'), 'utf8');
     assert.match(main, /path\.join\(process\.resourcesPath, 'google-oauth-client\.json'\)/);
   } finally {

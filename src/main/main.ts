@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, safeStorage, Notification, powerMonitor, Tray as ElectronTray, Menu, dialog, shell, type IpcMainInvokeEvent } from 'electron';
 import axios from 'axios';
 import { execFile } from 'node:child_process';
-import { mkdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -35,9 +35,10 @@ import { startSchedulerLifecycle } from './scheduler-bootstrap';
 import { createScheduleSettingsController } from '../services/schedule-settings';
 import { registerScheduleIpc } from './schedule-ipc';
 import { installTrayLifecycle } from './desktop-lifecycle';
-import { getSquirrelShortcutCommand } from './squirrel-startup';
+import { cleanupConferenceTaskOnUninstall, getSquirrelShortcutCommand } from './squirrel-startup';
 import { createLoginStartupController } from './login-startup';
 import { registerLoginStartupIpc } from './login-startup-ipc';
+import { registerAppVersionIpc } from './app-version-ipc';
 import { openStorageBeforeServices } from './storage-startup';
 import { authorizeGoogleCalendar } from '../providers/google-oauth';
 import { openExternalWithFallback } from '../providers/external-browser';
@@ -46,6 +47,18 @@ import { routeIsolatedSourceRequest } from './isolated-source-proxy';
 import { withOfficialHttpRetry } from './official-http-retry';
 import { createGoogleCalendarGateway, type GoogleCalendarApiPort } from '../providers/google-calendar';
 import { createLegacyConferenceProvider } from '../providers/conference';
+import { createConferenceHttpClient } from './conference-http';
+import { classifyConferenceSchedule, ALTERNATE_LEGACY_CONFERENCE_TASK_NAME, LEGACY_CONFERENCE_TASK_NAME, V2_CONFERENCE_TASK_NAME } from './conference-task-plan';
+import { bootstrapConferenceTask } from './conference-task-bootstrap';
+import { createWindowsConferenceTaskGateway } from './windows-conference-task-gateway';
+import { createConferenceSyncGate } from './conference-sync-gate';
+import { createConferenceTaskController } from './conference-task-controller';
+import { registerConferenceTaskIpc } from './conference-task-ipc';
+import { createLegacyConfigBridge, legacyConfigPathForPlan } from './legacy-config-bridge';
+import { createCoexistingWatchlistController } from './coexisting-watchlist-controller';
+import { createConferenceTaskOnboarding } from './conference-task-onboarding';
+import { inspectLegacyConfig } from '../services/legacy-config-sync';
+import { createConferenceDailyJob } from '../services/conference-daily-job';
 import { createConferenceSyncService } from '../services/conference-sync';
 import { createGoogleCalendarSession, type GoogleOAuthSessionPort } from '../services/google-calendar-session';
 import { createGoogleCalendarController } from './google-calendar-controller';
@@ -61,7 +74,10 @@ let unregisterDisclosureHandlers: (() => void) | undefined;
 let unregisterMaterialHandlers: (() => void) | undefined;
 let unregisterScheduleHandlers: (() => void) | undefined;
 let unregisterLoginStartupHandlers: (() => void) | undefined;
+let unregisterAppVersionHandler: (() => void) | undefined;
 let unregisterGoogleCalendarHandlers: (() => void) | undefined;
+let unregisterConferenceTaskHandlers: (() => void) | undefined;
+let reconcileConferenceTask: (() => Promise<void>) | undefined;
 let unregisterDataExportHandlers: (() => void) | undefined;
 let unregisterTestNotificationHandlers: (() => void) | undefined;
 let stopTestNotification: (() => void) | undefined;
@@ -70,7 +86,10 @@ let stopOutboxRecovery: (() => void) | undefined;
 let pendingNotificationRoute: NotificationRoute | undefined;
 let stopScheduler: (() => void) | undefined;
 let monitoringScheduler: ReturnType<typeof createMonitoringScheduler> | undefined;
+let conferenceDailyJob: ReturnType<typeof createConferenceDailyJob> | undefined;
+let pendingScheduledConferenceInvocation = false;
 let tray: ElectronTray | null = null;
+const isScheduledConferenceInvocation = process.argv.includes('--conference-scheduled');
 const enableIsolatedTrayHarness = Boolean(
   process.env.REPORTER_USER_DATA_DIR && process.env.REPORTER_TEST_TRAY === '1',
 );
@@ -96,21 +115,35 @@ const squirrelEvent = process.platform === 'win32' ? process.argv.find((argument
   ['--squirrel-install', '--squirrel-updated', '--squirrel-uninstall', '--squirrel-obsolete'].includes(argument)) : undefined;
 const isSquirrelStartup = Boolean(squirrelEvent);
 if (squirrelEvent) {
+  const updateExecutable = path.resolve(path.dirname(process.execPath), '..', 'Update.exe');
   const command = getSquirrelShortcutCommand(
     squirrelEvent,
     path.basename(process.execPath),
-    path.resolve(path.dirname(process.execPath), '..', 'Update.exe'),
+    updateExecutable,
   );
-  if (!command) app.quit();
-  else execFile(command.executable, command.args, (error) => {
-    if (error) logger.error('squirrel-shortcut-update-failed', error, { event: squirrelEvent });
-    app.quit();
-  });
+  void (async () => {
+    try {
+      const outcome = await cleanupConferenceTaskOnUninstall(squirrelEvent, updateExecutable, conferenceTaskGateway());
+      if (outcome !== 'untouched') logger.info('squirrel-conference-task-cleanup', { outcome });
+    } catch (error) {
+      logger.error('squirrel-conference-task-cleanup-failed', error);
+    }
+    if (!command) { app.quit(); return; }
+    execFile(command.executable, command.args, (error) => {
+      if (error) logger.error('squirrel-shortcut-update-failed', error, { event: squirrelEvent });
+      app.quit();
+    });
+  })();
 }
 
-const hasSingleInstanceLock = app.requestSingleInstanceLock();
-if (!hasSingleInstanceLock) app.quit();
-else app.on('second-instance', () => {
+const hasSingleInstanceLock = isSquirrelStartup ? false : app.requestSingleInstanceLock();
+if (!isSquirrelStartup && !hasSingleInstanceLock) app.quit();
+else if (hasSingleInstanceLock) app.on('second-instance', (_event, commandLine) => {
+  if (commandLine.includes('--conference-scheduled')) {
+    if (conferenceDailyJob) void runConferenceDaily().catch((error: unknown) => logger.error('conference-scheduled-failed', error));
+    else pendingScheduledConferenceInvocation = true;
+    return;
+  }
   if (!mainWindow || mainWindow.isDestroyed()) createWindow();
   else {
     if (mainWindow.isMinimized()) mainWindow.restore();
@@ -118,6 +151,57 @@ else app.on('second-instance', () => {
     mainWindow.focus();
   }
 });
+
+function conferenceTaskGateway() {
+  return createWindowsConferenceTaskGateway({
+    scriptPath: path.join(process.resourcesPath, 'conference-task.ps1'),
+    backupDirectory: path.join(app.getPath('userData'), 'windows-task-backups'),
+  });
+}
+
+async function legacyConfigExists(configPath: string): Promise<boolean> {
+  try {
+    await inspectLegacyConfig(configPath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function inspectConferenceSchedulePlan() {
+  if (process.platform !== 'win32' || !app.isPackaged || process.env.REPORTER_USER_DATA_DIR) {
+    return { kind: 'blocked' as const, reason: '隔離預覽不操作正式 Windows 法說會工作' };
+  }
+  const gateway = conferenceTaskGateway();
+  const [legacy, alternateLegacy, current] = await Promise.all([
+    gateway.inspect(LEGACY_CONFERENCE_TASK_NAME), gateway.inspect(ALTERNATE_LEGACY_CONFERENCE_TASK_NAME),
+    gateway.inspect(V2_CONFERENCE_TASK_NAME),
+  ]);
+  const knownLegacy = legacy && legacy !== 'inaccessible' ? legacy : alternateLegacy;
+  return classifyConferenceSchedule({
+    legacy, alternateLegacy, current,
+    expectedUpdateExe: path.resolve(path.dirname(process.execPath), '..', 'Update.exe'),
+    legacyConfigExists: Boolean(knownLegacy && knownLegacy !== 'inaccessible'
+      && await legacyConfigExists(path.win32.join(knownLegacy.workingDirectory, 'config', 'default.json'))),
+  });
+}
+
+async function inspectConferenceTaskOwner(): Promise<'v2' | 'legacy' | 'legacy-disabled' | 'blocked'> {
+  const plan = await inspectConferenceSchedulePlan();
+  return plan.kind === 'v2' || plan.kind === 'legacy' || plan.kind === 'legacy-disabled' ? plan.kind : 'blocked';
+}
+
+async function runConferenceDaily(): Promise<void> {
+  if (!conferenceDailyJob) {
+    logger.info('conference-scheduled-not-ready', { reason: 'services-unavailable' });
+    return;
+  }
+  const localDate = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Taipei', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date());
+  const outcome = await conferenceDailyJob.run(localDate);
+  logger.info(outcome.status === 'not-ready' ? 'conference-scheduled-not-ready' : 'conference-scheduled-finished', outcome);
+}
 
 function routeFromNotification(route: NotificationRoute): void {
   pendingNotificationRoute = route;
@@ -134,7 +218,11 @@ function routeFromNotification(route: NotificationRoute): void {
 }
 
 function createWindow(): BrowserWindow {
+  const windowTitle = process.env.REPORTER_USER_DATA_DIR
+    ? '股市記者小幫手 v2（隔離預覽）'
+    : '股市記者小幫手 v2';
   const window = new BrowserWindow({
+    title: windowTitle,
     width: 1200,
     height: 800,
     minWidth: 880,
@@ -147,6 +235,11 @@ function createWindow(): BrowserWindow {
       sandbox: true,
       preload: path.join(__dirname, 'preload.js'),
     },
+  });
+
+  window.webContents.on('page-title-updated', (event) => {
+    event.preventDefault();
+    window.setTitle(windowTitle);
   });
 
   window.webContents.setWindowOpenHandler(({ url }) => {
@@ -196,8 +289,10 @@ function createWindow(): BrowserWindow {
 function initializeApplicationServices(): void {
   const userDataPath = app.getPath('userData');
   mkdirSync(userDataPath, { recursive: true });
+  const databasePath = path.join(userDataPath, 'reporter.sqlite3');
+  const isNewProfile = !existsSync(databasePath);
   applicationDatabase = openStorageBeforeServices(
-    () => openDatabase(path.join(userDataPath, 'reporter.sqlite3')),
+    () => openDatabase(databasePath),
     (database) => { applicationDatabase = database; },
   );
   const dataExportController = createDataExportController({
@@ -286,19 +381,10 @@ function initializeApplicationServices(): void {
       && ipcEvent.sender === mainWindow.webContents
       && ipcEvent.senderFrame === mainWindow.webContents.mainFrame);
   };
-  unregisterWatchlistHandlers = registerWatchlistIpc(ipcMain, controller, isTrustedMainFrame);
+  unregisterAppVersionHandler = registerAppVersionIpc(ipcMain, app, isTrustedMainFrame);
   unregisterDisclosureHandlers = registerDisclosureIpc(ipcMain, createDisclosureController(repositories), isTrustedMainFrame);
   unregisterMaterialHandlers = registerMaterialIpc(ipcMain, createMaterialController(repositories), isTrustedMainFrame);
-  const conferenceHttp = {
-    async get(url: string): Promise<unknown> {
-      const response = await axios.get(url, { timeout: 12_000, headers: { 'User-Agent': 'StockReporterAssistant/2.0 (personal desktop app)' } });
-      return response;
-    },
-    async post(url: string, body: unknown): Promise<unknown> {
-      const response = await axios.post(url, body, { timeout: 12_000, headers: { 'User-Agent': 'StockReporterAssistant/2.0 (personal desktop app)' } });
-      return response;
-    },
-  };
+  const conferenceHttp = createConferenceHttpClient(axios);
   const legacyConferenceProvider = createLegacyConferenceProvider(conferenceHttp);
   const googleCalendarController = createGoogleCalendarController({
     session: googleCalendarSession,
@@ -349,14 +435,85 @@ function initializeApplicationServices(): void {
       return JSON.parse(await readFile(selection.filePaths[0], 'utf8')) as unknown;
     },
   });
+  const legacyConfigBridge = createLegacyConfigBridge({
+    repositories,
+    async locateLegacyConfig() {
+      const plan = await inspectConferenceSchedulePlan();
+      return legacyConfigPathForPlan(plan);
+    },
+  });
+  const conferenceTaskController = createConferenceTaskController({
+    inspectPlan: inspectConferenceSchedulePlan,
+    isSetupReady: async () => repositories.watchlist.list({ activeOnly: true }).length > 0
+      && (await googleCalendarSession.getStatus()).status === 'connected',
+    ensure: (setupReady) => process.platform !== 'win32' || !app.isPackaged || Boolean(process.env.REPORTER_USER_DATA_DIR)
+      ? Promise.resolve({ kind: 'blocked' as const, reason: '隔離預覽不操作正式 Windows 法說會工作' })
+      : bootstrapConferenceTask({
+      inspect: (name) => conferenceTaskGateway().inspect(name),
+      legacyConfigExists,
+      registerIfAbsent: (registration) => conferenceTaskGateway().registerIfAbsent(registration),
+      migrateOwnedTime: (expectedUpdateExe) => conferenceTaskGateway().migrateOwnedTime(expectedUpdateExe),
+      expectedUpdateExe: path.resolve(path.dirname(process.execPath), '..', 'Update.exe'),
+      setupReady,
+    }),
+    switchFromDisabledLegacy: (setupReady) => process.platform !== 'win32' || !app.isPackaged || Boolean(process.env.REPORTER_USER_DATA_DIR)
+      ? Promise.resolve({ kind: 'blocked' as const, reason: '隔離預覽不操作正式 Windows 法說會工作' })
+      : bootstrapConferenceTask({
+        inspect: (name) => conferenceTaskGateway().inspect(name),
+        legacyConfigExists,
+        registerIfAbsent: (registration) => conferenceTaskGateway().registerIfAbsent(registration),
+        migrateOwnedTime: (expectedUpdateExe) => conferenceTaskGateway().migrateOwnedTime(expectedUpdateExe),
+        expectedUpdateExe: path.resolve(path.dirname(process.execPath), '..', 'Update.exe'),
+        setupReady,
+        switchDisabledLegacy: true,
+      }),
+    bridge: legacyConfigBridge,
+  });
+  const onboarding = createConferenceTaskOnboarding({
+    status: conferenceTaskController.status,
+    ensure: conferenceTaskController.ensure,
+  });
+  reconcileConferenceTask = async () => {
+    try {
+      const status = await onboarding.reconcile();
+      if (status === 'blocked') logger.info('conference-task-not-ready');
+    } catch (error) {
+      logger.error('conference-task-onboarding-failed', error);
+    }
+  };
+  unregisterWatchlistHandlers = registerWatchlistIpc(ipcMain, createCoexistingWatchlistController({
+    base: controller,
+    inspectPlan: inspectConferenceSchedulePlan,
+    applyIfConfirmed: legacyConfigBridge.applyIfConfirmed,
+    afterMutation: reconcileConferenceTask,
+  }), isTrustedMainFrame);
+  unregisterConferenceTaskHandlers = registerConferenceTaskIpc(ipcMain, conferenceTaskController, isTrustedMainFrame);
+  const conferenceSyncGate = createConferenceSyncGate({
+    taskOwner: inspectConferenceTaskOwner,
+    runSync: () => googleCalendarController.sync(),
+  });
+  conferenceDailyJob = createConferenceDailyJob({
+    jobRuns: repositories.jobRuns,
+    taskOwner: inspectConferenceTaskOwner,
+    sync: () => conferenceSyncGate.sync(),
+    onFailure: (error) => logger.error('conference-scheduled-action-failed', error),
+  });
   unregisterGoogleCalendarHandlers = registerGoogleCalendarIpc(
-    ipcMain, googleCalendarController, isTrustedMainFrame,
+    ipcMain, {
+      ...googleCalendarController,
+      async connect() {
+        const status = await googleCalendarController.connect();
+        await reconcileConferenceTask?.();
+        return status;
+      },
+      sync: () => conferenceSyncGate.sync(),
+    }, isTrustedMainFrame,
     (operation, error) => logger.error('google-calendar-action-failed', error, { operation }),
   );
 
   // Standard suites stay offline. A separate opt-in isolated profile permits manual source reads only.
   const lifecycle = startSchedulerLifecycle({
-    isolated: Boolean(process.env.REPORTER_USER_DATA_DIR),
+    isolated: Boolean(process.env.REPORTER_USER_DATA_DIR || isScheduledConferenceInvocation),
     manualOnly: enableManualLiveSources,
     powerMonitor,
     setInterval,
@@ -438,6 +595,13 @@ function initializeApplicationServices(): void {
   });
   unregisterScheduleHandlers = registerScheduleIpc(ipcMain, createScheduleSettingsController({ repositories, scheduler: monitoringScheduler }), isTrustedMainFrame);
   const loginStartup = createLoginStartupController(app, process.execPath, app.isPackaged && process.platform === 'win32');
+  if (isNewProfile && !process.env.REPORTER_USER_DATA_DIR) {
+    try {
+      loginStartup.applyNewProfileDefaults();
+    } catch (error) {
+      logger.error('login-startup-default-failed', error);
+    }
+  }
   unregisterLoginStartupHandlers = registerLoginStartupIpc(ipcMain, loginStartup, isTrustedMainFrame);
   unregisterDataExportHandlers = registerDataExportIpc(ipcMain, dataExportController, isTrustedMainFrame);
   const testNotificationController = createTestNotificationController({
@@ -468,6 +632,16 @@ function loadApplicationOAuthClientConfiguration(): unknown | undefined {
 if (!isSquirrelStartup && hasSingleInstanceLock) void app.whenReady().then(() => {
   initializeApplicationServices();
   logger.info('main-ready');
+  if (!process.env.REPORTER_USER_DATA_DIR && !isScheduledConferenceInvocation) void reconcileConferenceTask?.();
+  if (pendingScheduledConferenceInvocation) {
+    pendingScheduledConferenceInvocation = false;
+    void runConferenceDaily().catch((error: unknown) => logger.error('conference-scheduled-failed', error));
+  }
+  if (isScheduledConferenceInvocation) {
+    void runConferenceDaily().catch((error: unknown) => logger.error('conference-scheduled-failed', error))
+      .finally(() => app.quit());
+    return;
+  }
   createWindow();
   startOutboxRecovery?.();
   if (!process.env.REPORTER_USER_DATA_DIR || enableIsolatedTrayHarness) {
@@ -525,8 +699,12 @@ app.on('before-quit', () => {
   unregisterMaterialHandlers = undefined;
   unregisterLoginStartupHandlers?.();
   unregisterLoginStartupHandlers = undefined;
+  unregisterAppVersionHandler?.();
+  unregisterAppVersionHandler = undefined;
   unregisterGoogleCalendarHandlers?.();
   unregisterGoogleCalendarHandlers = undefined;
+  unregisterConferenceTaskHandlers?.();
+  unregisterConferenceTaskHandlers = undefined;
   unregisterDataExportHandlers?.();
   unregisterDataExportHandlers = undefined;
   unregisterTestNotificationHandlers?.();

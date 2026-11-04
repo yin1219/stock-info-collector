@@ -1,6 +1,6 @@
 # v2 規格導向審查邊界
 
-這是 `build-stock-reporter-assistant-v2` Goal 的收尾審查，不是新增產品需求。本輪來源、設定頁、登入啟動及延遲測試通知修正後，各由一名獨立 sub-agent 做一次 code review 與測試 review；審查修正再納入 task 9.7 的最終驗證。
+這是 `build-stock-reporter-assistant-v2` Goal 的收尾審查，不是新增產品需求。本輪來源、設定頁、登入啟動及延遲測試通知修正後，各由一名獨立 sub-agent 做一次 code review 與測試 review；審查修正已納入 task 9.7 的最終驗證。下文保留審查當時的進度紀錄；最新完成狀態以 `tasks.md` 與 `docs/scenario-traceability.md` 為準。
 
 ## 共同依據與範圍
 

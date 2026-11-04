@@ -4,11 +4,11 @@ import { createReporterApi } from '../../src/preload/api';
 describe('security architecture / preload exposes narrow typed watchlist APIs', () => {
   it('maps UI operations to fixed IPC channels without exposing invoke or filesystem primitives', async () => {
     const calls: Array<{ channel: string; payload?: unknown }> = [];
-    const api = createReporterApi('44.0.0', {
+    const api = createReporterApi({
       invoke(channel, payload) { calls.push({ channel, payload }); return Promise.resolve(channel); },
     });
 
-    expect(api.getVersion()).toBe('44.0.0');
+    expect(await api.getVersion()).toBe('desktop:get-app-version');
     await api.listWatchlist({ query: '2330', activeOnly: true });
     await api.addWatchlist({ market: 'TWSE', stockCode: '2330' });
     await api.updateWatchlist({ companyId: 'co-1', category: '半導體', notes: '追蹤' });
@@ -27,13 +27,20 @@ describe('security architecture / preload exposes narrow typed watchlist APIs', 
     await api.sendTestNotification();
     await api.scheduleTestNotification();
     await api.softDeleteMaterialEvent('event-1');
+    await api.getConferenceTaskStatus();
+    await api.ensureConferenceTask();
+    await api.switchFromDisabledLegacy();
+    await api.reviewLegacyConferenceConfig();
+    await api.confirmLegacyConferenceConfig('a'.repeat(64));
 
     expect(calls.map(({ channel }) => channel)).toEqual([
-      'watchlist:list', 'watchlist:add', 'watchlist:update', 'watchlist:set-active',
+      'desktop:get-app-version', 'watchlist:list', 'watchlist:add', 'watchlist:update', 'watchlist:set-active',
       'watchlist:remove', 'watchlist:import-preview', 'watchlist:import-apply',
       'calendar:get-status', 'calendar:import-credentials', 'calendar:migrate-legacy-token', 'calendar:connect', 'calendar:list', 'calendar:sync', 'calendar:disconnect',
       'data:export', 'notification:send-test', 'notification:schedule-test', 'material-events:soft-delete',
+      'conference-task:status', 'conference-task:ensure', 'conference-task:switch-disabled-legacy', 'conference-task:review-legacy', 'conference-task:confirm-legacy',
     ]);
+    expect(calls.at(-1)?.payload).toEqual({ hash: 'a'.repeat(64) });
     expect('invoke' in api).toBe(false);
     expect('readFile' in api).toBe(false);
   });
@@ -41,7 +48,7 @@ describe('security architecture / preload exposes narrow typed watchlist APIs', 
   it('accepts only typed internal notification routes and provides an unsubscribe handle', () => {
     let listener: ((_event: unknown, payload: unknown) => void) | undefined;
     let removed = false;
-    const api = createReporterApi('44.0.0', {
+    const api = createReporterApi({
       invoke() { return Promise.resolve(); },
       on(channel, next) { expect(channel).toBe('notification:navigate'); listener = next; return this; },
       removeListener(_channel, target) { removed = target === listener; return this; },

@@ -37,6 +37,11 @@ function setupApi() {
   };
   let loginStartupSettings = { enabled: false, startHidden: false };
   let googleCalendarStatus = { status: 'disconnected' as const };
+  let conferenceTaskStatus = { kind: 'legacy' as const, configPath: 'F:\\ReporterV1\\config\\default.json', setupReady: false };
+  let legacyConfigReview = {
+    configPath: 'F:\\ReporterV1\\config\\default.json', hash: 'a'.repeat(64),
+    currentCodes: ['2330'], activeCodes: ['2454'], confirmed: false,
+  };
   const conferences = [
     { id: 'conf-pending', companyId: 'company-1', stockCode: '2330', companyName: '台積電', startsAt: '2026-10-01T02:00:00.000Z', location: '台北', content: '法說會', sourceUrl: 'https://mops.twse.com.tw/mops/web/t100sb07_1?co_id=2330', syncStatus: 'pending', lastError: null },
     { id: 'conf-existing', companyId: 'company-1', stockCode: '2330', companyName: '台積電', startsAt: '2026-10-02T02:00:00.000Z', location: '線上', content: '法說會', syncStatus: 'existing', lastError: null },
@@ -48,7 +53,7 @@ function setupApi() {
     disclosure: { enabled: true, status: 'complete', lastSuccessAt: '2026-09-25T10:30:00.000Z', lastResult: 'complete', errorMessage: null, nextRunAt: '2026-09-26T10:30:00.000Z' },
   };
   const api: ReporterApi = {
-    getVersion: () => 'test',
+    getVersion: vi.fn(async () => '1.0.13'),
     getMaterialMonitorStatus: vi.fn(async () => ({
       status: 'degraded', finishedAt: '2026-09-26T11:00:00.000Z', errorMessage: 'MOPS 暫時無法連線，RSS 備援已使用。',
       sources: [{ source: 'MOPS', status: 'failed' }, { source: 'MOPS-RSS', status: 'complete' }, { source: 'TWSE-reconciliation', status: 'complete' }],
@@ -60,6 +65,14 @@ function setupApi() {
     disconnectGoogleCalendar: vi.fn(async () => { googleCalendarStatus = { status: 'disconnected' }; return googleCalendarStatus; }),
     listConferences: vi.fn(async () => conferences),
     syncConferences: vi.fn(async () => ({ status: 'complete', results: [] })),
+    getConferenceTaskStatus: vi.fn(async () => conferenceTaskStatus),
+    ensureConferenceTask: vi.fn(async () => { conferenceTaskStatus = { kind: 'legacy', configPath: conferenceTaskStatus.configPath, setupReady: false }; return conferenceTaskStatus; }),
+    switchFromDisabledLegacy: vi.fn(async () => ({ kind: 'v2', setupReady: true })),
+    reviewLegacyConferenceConfig: vi.fn(async () => legacyConfigReview),
+    confirmLegacyConferenceConfig: vi.fn(async () => {
+      legacyConfigReview = { ...legacyConfigReview, currentCodes: [...legacyConfigReview.activeCodes], confirmed: true };
+      return { status: 'applied' as const, stockNumbers: [...legacyConfigReview.activeCodes], backupPath: 'F:\\ReporterV1\\config\\default.json.pre-v2.backup' };
+    }),
     getScheduleSettings: vi.fn(async () => scheduleSettings),
     saveScheduleSettings: vi.fn(async (value) => { scheduleSettings = value; return value; }),
     getScheduleStatus: vi.fn(async () => scheduleStatus),
@@ -117,6 +130,12 @@ function setupApi() {
 }
 
 describe('watchlist-management / UI', () => {
+  it('desktop-app-lifecycle / installed version UI / displays the running patch version in the sidebar', async () => {
+    const api = setupApi();
+    render(<App />);
+    expect(await screen.findByText('v2 · 版本 1.0.13')).toBeVisible();
+    expect(api.getVersion).toHaveBeenCalledOnce();
+  });
   afterEach(() => cleanup());
 
   it('removes a company from the visible list instead of showing it as disabled', async () => {
@@ -193,6 +212,199 @@ describe('watchlist-management / UI', () => {
     await waitFor(() => expect(api.saveScheduleSettings).toHaveBeenCalledWith(expect.objectContaining({
       notifyEmptyDefaultDisclosures: false,
     })));
+  });
+
+  it('watchlist-management / legacy schedule UI / reviews old and active codes before confirming v1 config changes', async () => {
+    const api = setupApi();
+    render(<App />);
+    await userEvent.click(await screen.findByRole('tab', { name: '設定' }));
+    expect(await screen.findByRole('heading', { name: '法說會每日工作' })).toBeVisible();
+    expect(await screen.findByText(/沿用既有 v1 工作/)).toBeVisible();
+    await userEvent.click(screen.getByRole('button', { name: '核對舊版股號' }));
+    expect(await screen.findByText(/舊版目前：2330/)).toBeVisible();
+    expect(screen.getByText(/v2 啟用：2454/)).toBeVisible();
+    expect(api.confirmLegacyConferenceConfig).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole('button', { name: '確認套用到舊版工作' }));
+    await waitFor(() => expect(api.confirmLegacyConferenceConfig).toHaveBeenCalledWith('a'.repeat(64)));
+    expect(await screen.findByText(/已套用到舊版/)).toBeVisible();
+  });
+
+  it('watchlist-management / disabled legacy schedule UI / still offers reviewed stock-code sync for rollback', async () => {
+    const api = setupApi();
+    vi.mocked(api.getConferenceTaskStatus).mockResolvedValue({
+      kind: 'legacy-disabled', configPath: 'F:\\ReporterV1\\config\\default.json', setupReady: true,
+    });
+    render(<App />);
+    await userEvent.click(await screen.findByRole('tab', { name: '設定' }));
+    expect(await screen.findByText(/既有 v1 工作已停用/)).toBeVisible();
+    await userEvent.click(screen.getByRole('button', { name: '核對舊版股號' }));
+    expect(await screen.findByText(/舊版目前：2330/)).toBeVisible();
+    await userEvent.click(screen.getByRole('button', { name: '確認套用到舊版工作' }));
+    await waitFor(() => expect(api.confirmLegacyConferenceConfig).toHaveBeenCalledWith('a'.repeat(64)));
+  });
+
+  it('watchlist-management / v2 schedule UI / offers reviewed stock-code sync for a retained disabled v1 task', async () => {
+    const api = setupApi();
+    vi.mocked(api.getConferenceTaskStatus).mockResolvedValue({
+      kind: 'v2', legacyConfigPath: 'F:\\ReporterV1\\config\\default.json', setupReady: true,
+    });
+    render(<App />);
+    await userEvent.click(await screen.findByRole('tab', { name: '設定' }));
+    expect(await screen.findByText(/v2 每日工作已建立/)).toBeVisible();
+    expect(screen.getByText(/Windows 每日 19:00 執行/)).toBeVisible();
+    await userEvent.click(await screen.findByRole('button', { name: '核對舊版股號' }));
+    expect(await screen.findByText(/舊版目前：2330/)).toBeVisible();
+    await userEvent.click(screen.getByRole('button', { name: '確認套用到舊版工作' }));
+    await waitFor(() => expect(api.confirmLegacyConferenceConfig).toHaveBeenCalledWith('a'.repeat(64)));
+  });
+
+  it('windows-distribution / schedule UI / explains and retries a verified old v2 time migration', async () => {
+    const api = setupApi();
+    vi.mocked(api.getConferenceTaskStatus).mockResolvedValue({ kind: 'upgrade-v2-time', setupReady: true });
+    vi.mocked(api.ensureConferenceTask).mockResolvedValue({ kind: 'v2', setupReady: true });
+    render(<App />);
+    await userEvent.click(await screen.findByRole('tab', { name: '設定' }));
+    expect(await screen.findByText(/17:45.*19:00/)).toBeVisible();
+    await userEvent.click(screen.getByRole('button', { name: '重試遷移至 19:00' }));
+    await waitFor(() => expect(api.ensureConferenceTask).toHaveBeenCalledOnce());
+  });
+
+  it('watchlist-management / v2 rollback UI / reports confirmed v1 stock-code synchronization after a watchlist change', async () => {
+    const api = setupApi();
+    vi.mocked(api.getConferenceTaskStatus).mockResolvedValue({
+      kind: 'v2', legacyConfigPath: 'F:\\ReporterV1\\config\\default.json', setupReady: true,
+    });
+    vi.mocked(api.reviewLegacyConferenceConfig).mockResolvedValue({
+      configPath: 'F:\\ReporterV1\\config\\default.json', hash: 'b'.repeat(64),
+      currentCodes: ['2330', '2454'], activeCodes: ['2330', '2454'], confirmed: true,
+    });
+    render(<App />);
+    await userEvent.type(screen.getByRole('textbox', { name: '股票代號' }), '2454');
+    await userEvent.click(screen.getByRole('button', { name: '新增公司' }));
+    expect(await screen.findByText('v1 法說會股號已套用')).toBeVisible();
+    expect(api.reviewLegacyConferenceConfig).toHaveBeenCalledOnce();
+  });
+
+  it('windows-distribution / legacy task health UI / warns when the sole v1 task last returned an error', async () => {
+    const api = setupApi();
+    vi.mocked(api.getConferenceTaskStatus).mockResolvedValue({
+      kind: 'legacy', configPath: 'F:\\ReporterV1\\config\\default.json',
+      lastTaskResult: 0x800710e0,
+    });
+    render(<App />);
+    await userEvent.click(await screen.findByRole('tab', { name: '設定' }));
+    expect(await screen.findByText(/最近一次 Windows 工作結果異常.*0x800710E0/)).toHaveAttribute('role', 'alert');
+    expect(api.ensureConferenceTask).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole('tab', { name: '法說會' }));
+    expect(await screen.findByText(/最近一次 Windows 工作結果異常/)).toBeVisible();
+  });
+
+  it('windows-distribution / v2 task health UI / distinguishes a new task from a failed task', async () => {
+    const api = setupApi();
+    vi.mocked(api.getConferenceTaskStatus).mockResolvedValue({ kind: 'v2', lastTaskResult: 0x41303 });
+    render(<App />);
+    await userEvent.click(await screen.findByRole('tab', { name: '設定' }));
+    expect(await screen.findByText(/v2 法說會工作尚未執行/)).toHaveAttribute('role', 'status');
+    expect(screen.queryByText(/Windows 工作結果異常/)).not.toBeInTheDocument();
+    vi.mocked(api.getConferenceTaskStatus).mockResolvedValue({ kind: 'v2', lastTaskResult: 0x800710e0 });
+    await userEvent.click(screen.getByRole('tab', { name: '法說會' }));
+    expect(await screen.findByText(/最近一次 Windows 工作結果異常.*0x800710E0/)).toHaveAttribute('role', 'alert');
+  });
+
+  it('watchlist-management / legacy schedule UI / cannot replace the last v1 stock code with an empty active list', async () => {
+    const api = setupApi();
+    vi.mocked(api.reviewLegacyConferenceConfig).mockResolvedValue({
+      configPath: 'F:\\ReporterV1\\config\\default.json', hash: 'a'.repeat(64),
+      currentCodes: ['2330'], activeCodes: [], confirmed: false,
+    });
+    render(<App />);
+    await userEvent.click(await screen.findByRole('tab', { name: '設定' }));
+    await userEvent.click(screen.getByRole('button', { name: '核對舊版股號' }));
+    expect(await screen.findByText(/舊版目前：2330/)).toBeVisible();
+    expect(screen.getByRole('button', { name: '確認套用到舊版工作' })).toBeDisabled();
+    expect(api.confirmLegacyConferenceConfig).not.toHaveBeenCalled();
+  });
+
+  it('windows-distribution / schedule UI / never calls registration when task status is unknown', async () => {
+    const api = setupApi();
+    vi.mocked(api.getConferenceTaskStatus).mockResolvedValue({ kind: 'blocked', reason: '無法確認既有工作', setupReady: false });
+    render(<App />);
+    await userEvent.click(await screen.findByRole('tab', { name: '設定' }));
+    expect(await screen.findByText(/無法確認既有工作/)).toBeVisible();
+    expect(screen.queryByRole('button', { name: '建立 v2 每日工作' })).not.toBeInTheDocument();
+    expect(api.ensureConferenceTask).not.toHaveBeenCalled();
+  });
+
+  it('windows-distribution / schedule UI / requires readiness and an explicit click before creating the v2 daily task', async () => {
+    const api = setupApi();
+    vi.mocked(api.getConferenceTaskStatus).mockResolvedValueOnce({ kind: 'create-v2', setupReady: false })
+      .mockResolvedValueOnce({ kind: 'create-v2', setupReady: false })
+      .mockResolvedValueOnce({ kind: 'create-v2', setupReady: true });
+    vi.mocked(api.ensureConferenceTask).mockResolvedValue({ kind: 'v2', setupReady: true });
+    render(<App />);
+    await userEvent.click(await screen.findByRole('tab', { name: '設定' }));
+    const button = await screen.findByRole('button', { name: '建立 v2 每日工作' });
+    expect(button).toBeDisabled();
+    expect(api.ensureConferenceTask).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole('tab', { name: '法說會' }));
+    await userEvent.click(screen.getByRole('tab', { name: '設定' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: '建立 v2 每日工作' })).toBeEnabled());
+    expect(api.ensureConferenceTask).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole('button', { name: '建立 v2 每日工作' }));
+    await waitFor(() => expect(api.ensureConferenceTask).toHaveBeenCalledOnce());
+    expect(await screen.findByText('v2 每日工作已就緒。')).toBeVisible();
+  });
+
+  it('watchlist-management / v1 coexistence UI / refreshes the changed v2 list and warns when old config was not synchronized', async () => {
+    const api = setupApi();
+    vi.mocked(api.removeWatchlist).mockRejectedValueOnce(new Error('v2 清單已更新，但 v1 法說會工作未同步：設定已由外部修改'));
+    vi.mocked(api.listWatchlist).mockResolvedValueOnce([company]).mockResolvedValue([]);
+    render(<App />);
+    await userEvent.click(await screen.findByRole('button', { name: '移除台積電' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('v2 清單已更新，但 v1 法說會工作未同步');
+    await waitFor(() => expect(screen.queryByRole('button', { name: '移除台積電' })).not.toBeInTheDocument());
+  });
+
+  it('watchlist-management / v1 coexistence UI / reports a verified legacy config update after adding a company', async () => {
+    const api = setupApi();
+    vi.mocked(api.reviewLegacyConferenceConfig).mockResolvedValue({
+      configPath: 'F:\\ReporterV1\\config\\default.json', hash: 'b'.repeat(64),
+      currentCodes: ['2330', '2454'], activeCodes: ['2330', '2454'], confirmed: true,
+    });
+    render(<App />);
+    await userEvent.type(screen.getByRole('textbox', { name: '股票代號' }), '2454');
+    await userEvent.click(screen.getByRole('button', { name: '新增公司' }));
+    expect(await screen.findByText('v1 法說會股號已套用')).toBeVisible();
+    expect(api.reviewLegacyConferenceConfig).toHaveBeenCalledOnce();
+  });
+
+  it('watchlist-management / disabled v1 coexistence UI / reports confirmed rollback-list synchronization', async () => {
+    const api = setupApi();
+    vi.mocked(api.getConferenceTaskStatus).mockResolvedValue({
+      kind: 'legacy-disabled', configPath: 'F:\\ReporterV1\\config\\default.json', setupReady: true,
+    });
+    vi.mocked(api.reviewLegacyConferenceConfig).mockResolvedValue({
+      configPath: 'F:\\ReporterV1\\config\\default.json', hash: 'b'.repeat(64),
+      currentCodes: ['2330', '2454'], activeCodes: ['2330', '2454'], confirmed: true,
+    });
+    render(<App />);
+    await userEvent.type(screen.getByRole('textbox', { name: '股票代號' }), '2454');
+    await userEvent.click(screen.getByRole('button', { name: '新增公司' }));
+    expect(await screen.findByText('v1 法說會股號已套用')).toBeVisible();
+    expect(api.reviewLegacyConferenceConfig).toHaveBeenCalledOnce();
+  });
+
+  it('watchlist-management / v1 coexistence UI / never claims application when the legacy config cannot be verified', async () => {
+    const api = setupApi();
+    vi.mocked(api.reviewLegacyConferenceConfig).mockResolvedValue({
+      configPath: 'F:\\ReporterV1\\config\\default.json', hash: 'b'.repeat(64),
+      currentCodes: ['2330'], activeCodes: ['2330', '2454'], confirmed: false,
+    });
+    render(<App />);
+    await userEvent.type(screen.getByRole('textbox', { name: '股票代號' }), '2454');
+    await userEvent.click(screen.getByRole('button', { name: '新增公司' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('無法確認 v1 法說會股號已套用');
+    expect(screen.queryByText('v1 法說會股號已套用')).not.toBeInTheDocument();
   });
 
   it('desktop-app-lifecycle / accessibility / exposes labelled controls and landmarks on primary screens', async () => {
@@ -273,8 +485,61 @@ describe('watchlist-management / UI', () => {
     await userEvent.click(await screen.findByRole('tab', { name: '法說會' }));
     await userEvent.click(await screen.findByRole('button', { name: '連線 Google Calendar' }));
 
-    expect(await screen.findByRole('status')).toHaveTextContent('請在系統瀏覽器完成 Google 授權');
+    expect(await screen.findByText('請在系統瀏覽器完成 Google 授權；完成後此頁會更新連線狀態。')).toHaveAttribute('role', 'status');
     expect(screen.getByRole('button', { name: '連線 Google Calendar' })).toBeDisabled();
+  });
+
+  it('conference-calendar-sync / single writer UI / explains legacy ownership and disables manual v2 sync', async () => {
+    const api = setupApi();
+    vi.mocked(api.getGoogleCalendarStatus).mockResolvedValue({ status: 'connected' });
+    render(<App />);
+    await userEvent.click(await screen.findByRole('tab', { name: '法說會' }));
+    expect(await screen.findByText(/既有 v1 工作仍是唯一受管法說會排程/)).toBeVisible();
+    expect(screen.getByRole('button', { name: '立即擷取並同步法說會' })).toBeDisabled();
+    expect(api.syncConferences).not.toHaveBeenCalled();
+  });
+
+  it('conference-calendar-sync / single writer UI / permits manual sync only for a verified v2 owner', async () => {
+    const api = setupApi();
+    vi.mocked(api.getGoogleCalendarStatus).mockResolvedValue({ status: 'connected' });
+    vi.mocked(api.getConferenceTaskStatus).mockResolvedValue({ kind: 'v2', setupReady: true });
+    render(<App />);
+    await userEvent.click(await screen.findByRole('tab', { name: '法說會' }));
+    const button = await screen.findByRole('button', { name: '立即擷取並同步法說會' });
+    await waitFor(() => expect(button).toBeEnabled());
+    await userEvent.click(button);
+    expect(api.syncConferences).toHaveBeenCalledOnce();
+  });
+
+  it('conference-calendar-sync / disabled legacy acceptance / permits manual sync without claiming a daily schedule', async () => {
+    const api = setupApi();
+    vi.mocked(api.getGoogleCalendarStatus).mockResolvedValue({ status: 'connected' });
+    vi.mocked(api.getConferenceTaskStatus).mockResolvedValue({
+      kind: 'legacy-disabled', configPath: 'F:\\ReporterV1\\config\\default.json', setupReady: true,
+    });
+    render(<App />);
+    await userEvent.click(await screen.findByRole('tab', { name: '法說會' }));
+    expect(await screen.findByText(/v1 工作已停用.*尚無每日排程/)).toBeVisible();
+    const button = await screen.findByRole('button', { name: '立即擷取並同步法說會' });
+    await waitFor(() => expect(button).toBeEnabled());
+    await userEvent.click(button);
+    expect(api.syncConferences).toHaveBeenCalledOnce();
+  });
+
+  it('windows-distribution / explicit schedule switch / requires confirmation before replacing disabled v1 ownership', async () => {
+    const api = setupApi();
+    vi.mocked(api.getConferenceTaskStatus).mockResolvedValue({ kind: 'legacy-disabled', configPath: 'F:\\ReporterV1\\config\\default.json', setupReady: true });
+    const confirmation = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValueOnce(true);
+    render(<App />);
+    await userEvent.click(screen.getByRole('tab', { name: '設定' }));
+    const button = await screen.findByRole('button', { name: '切換為 v2 每日排程' });
+    await userEvent.click(button);
+    expect(api.switchFromDisabledLegacy).not.toHaveBeenCalled();
+    await userEvent.click(button);
+    await waitFor(() => expect(api.switchFromDisabledLegacy).toHaveBeenCalledOnce());
+    expect(await screen.findByText('v2 每日工作已就緒。')).toBeVisible();
+    expect(confirmation).toHaveBeenCalledTimes(2);
+    confirmation.mockRestore();
   });
 
   it('conference-calendar-sync / legacy migration UI / requests the one-time migration only after an explicit click', async () => {
@@ -369,6 +634,26 @@ describe('watchlist-management / UI', () => {
     await userEvent.click(screen.getByRole('button', { name: '查看重大訊息與來源狀態' }));
     expect(await screen.findByRole('heading', { name: '重大訊息', level: 2 })).toBeVisible();
     expect(screen.getByText('MOPS：部分降級（資料日期 2026-09-26，來源回傳 8 筆）')).toBeVisible();
+  });
+
+  it('material-event-monitoring / reconciliation date UI / labels report dates separately from announcement dates', async () => {
+    const api = setupApi();
+    api.getMaterialMonitorStatus = vi.fn(async () => ({
+      status: 'degraded', finishedAt: '2026-09-30T03:00:00.000Z', errorMessage: null,
+      sources: [
+        { source: 'MOPS', status: 'degraded', dataDate: '2026-09-30', recordCount: 11, errorMessage: null },
+        { source: 'TWSE-reconciliation', status: 'complete', dataDate: '2026-09-30', recordCount: 115, errorMessage: null },
+        { source: 'TPEX-reconciliation', status: 'stale', dataDate: '2026-09-29', recordCount: 0, errorMessage: null },
+      ],
+    }));
+
+    render(<App />);
+    await userEvent.click(screen.getByRole('tab', { name: '重大訊息' }));
+    expect(await screen.findByText('MOPS：部分降級（資料日期 2026-09-30，來源回傳 11 筆）')).toBeVisible();
+    expect(screen.getByText('上市結構化每日對帳：資料完整（出表日期 2026-09-30，來源回傳 115 筆）')).toBeVisible();
+    expect(screen.getByText('上櫃結構化每日對帳：官方尚未更新（出表日期 2026-09-29）')).toBeVisible();
+    expect(screen.getByText('對帳的出表日期可能晚於公告發言日期；對帳筆數不等於當日新公告筆數。')).toBeVisible();
+    expect(screen.queryByText('上市結構化每日對帳：資料完整（資料日期 2026-09-30，來源回傳 115 筆）')).not.toBeInTheDocument();
   });
 
   it('shows that isolated mode cannot run live checks instead of offering ineffective buttons', async () => {
@@ -509,7 +794,8 @@ describe('watchlist-management / UI', () => {
     await userEvent.click(screen.getByRole('tab', { name: '違約交割' }));
     expect(await screen.findByRole('status', { name: '違約交割來源狀態' })).toHaveTextContent('資料來源部分降級');
     expect(screen.getByRole('status', { name: '違約交割來源狀態' })).toHaveTextContent('TWSE：官方尚未更新（資料日期 2026-09-25）');
-    expect(screen.getByRole('status', { name: '違約交割來源狀態' })).toHaveTextContent(/預計重試 2026\/09\/26\s*19:00/);
+    expect(screen.getByRole('status', { name: '違約交割來源狀態' })).toHaveTextContent(/原定重試 2026\/09\/26\s*19:00/);
+    expect(screen.getByRole('status', { name: '違約交割來源狀態' })).not.toHaveTextContent('預計重試');
     expect(screen.getByRole('status', { name: '違約交割來源狀態' })).not.toHaveTextContent('T19:00:00+08:00');
     expect(screen.getByRole('status', { name: '違約交割來源狀態' })).toHaveTextContent('TPEX：來源失敗');
     expect(screen.getByText('來源檢查失敗或官方資料尚未更新，不能判定為零筆。')).toBeVisible();

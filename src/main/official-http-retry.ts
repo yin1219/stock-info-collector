@@ -1,7 +1,7 @@
 function isTransient(error: unknown): boolean {
   if (!error || typeof error !== 'object') return false;
   const value = error as { code?: string; response?: { status?: number } };
-  return value.code === 'ECONNABORTED' || value.code === 'ETIMEDOUT'
+  return value.code === 'ECONNABORTED' || value.code === 'ETIMEDOUT' || value.code === 'ECONNRESET' || value.code === 'EAI_AGAIN'
     || [429, 502, 503, 504].includes(value.response?.status ?? 0);
 }
 

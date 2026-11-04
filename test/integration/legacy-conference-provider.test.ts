@@ -24,6 +24,26 @@ describe('conference-calendar-sync / provider contract / migrates the legacy MOP
     ]);
   });
 
+  it('accepts the official MOPS old-system redirect host while still rejecting lookalike hosts', async () => {
+    const html = await loadFixture('conferences/mops-conference.html');
+    const officialUrl = 'https://mopsov.twse.com.tw/mops/web/ajax_t100sb07_1?co_id=2454';
+    const fetched: string[] = [];
+    const official = createLegacyConferenceProvider({
+      async post() { return { result: { url: officialUrl } }; },
+      async get(url: string) { fetched.push(url); return html; },
+    });
+    await expect(official.fetch(['2454'])).resolves.toEqual([expect.objectContaining({
+      CompId: '2454', SourceUrl: officialUrl,
+    })]);
+    expect(fetched).toEqual([officialUrl]);
+
+    const lookalike = createLegacyConferenceProvider({
+      async post() { return { result: { url: 'https://mopsov.twse.com.tw.evil.example/mops/web/ajax_t100sb07_1' } }; },
+      async get() { throw new Error('lookalike host must not be fetched'); },
+    });
+    await expect(lookalike.fetch(['2454'])).rejects.toThrow(/官方 MOPS 主機/);
+  });
+
   it('rejects invalid codes and redirects outside the official MOPS host before fetching HTML', async () => {
     let fetchCount = 0;
     const provider = createLegacyConferenceProvider({
@@ -33,5 +53,20 @@ describe('conference-calendar-sync / provider contract / migrates the legacy MOP
     await expect(provider.fetch(['../token.json'])).rejects.toThrow(/股票代號/);
     await expect(provider.fetch(['2454'])).rejects.toThrow(/MOPS/);
     expect(fetchCount).toBe(0);
+  });
+
+  it('identifies the stock code and source stage when MOPS transport remains unavailable', async () => {
+    const reset = Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' });
+    const redirectFailure = createLegacyConferenceProvider({
+      async post() { throw reset; },
+      async get() { throw new Error('must not fetch HTML'); },
+    });
+    await expect(redirectFailure.fetch(['2454'])).rejects.toThrow(/2454.*轉址.*ECONNRESET/);
+
+    const htmlFailure = createLegacyConferenceProvider({
+      async post() { return { result: { url: 'https://mopsov.twse.com.tw/mops/web/ajax_t100sb07_1' } }; },
+      async get() { throw reset; },
+    });
+    await expect(htmlFailure.fetch(['3629'])).rejects.toThrow(/3629.*結果頁.*ECONNRESET/);
   });
 });

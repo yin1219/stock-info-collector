@@ -1,3 +1,6 @@
+import { buildLegacyCalendarEvent } from '../providers/conference';
+import type { SavedConference } from '../services/conference-sync';
+
 interface GoogleSession {
   getStatus(): Promise<{ status: string }>;
   configure?(document: unknown): Promise<void>;
@@ -24,6 +27,7 @@ export function createGoogleCalendarController(dependencies: {
   };
   fetchConferences: ConferenceSource['fetch'];
   syncConferences: ConferenceSync['sync'];
+  now?: () => Date;
   selectCredentials(): Promise<unknown | null>;
   confirmLegacyTokenMigration(): Promise<boolean>;
   selectLegacyToken(): Promise<unknown | null>;
@@ -72,7 +76,25 @@ export function createGoogleCalendarController(dependencies: {
       if (authorization.status !== 'connected') throw new Error('Google Calendar 需要重新授權');
       const codes = dependencies.repositories.watchlist.list({ activeOnly: true }).map(({ stockCode }) => stockCode);
       const source = await dependencies.fetchConferences(codes);
-      const results = await dependencies.syncConferences(source);
+      const fetchedKeys = new Set<string>();
+      for (const candidate of source) {
+        if (!candidate || typeof candidate !== 'object' || !('CompId' in candidate)) continue;
+        try {
+          const event = buildLegacyCalendarEvent(candidate as Parameters<typeof buildLegacyCalendarEvent>[0]);
+          fetchedKeys.add(`${candidate.CompId}:${new Date(event.start.dateTime).toISOString()}`);
+        } catch { /* Invalid source rows are still passed to the sync service for per-item failure reporting. */ }
+      }
+      const currentTime = (dependencies.now ?? (() => new Date()))().getTime();
+      const activeCodes = new Set(codes);
+      const saved: SavedConference[] = dependencies.repositories.conferences.list()
+        .filter((conference) => activeCodes.has(conference.stockCode)
+          && new Date(conference.startsAt).getTime() >= currentTime
+          && !fetchedKeys.has(`${conference.stockCode}:${new Date(conference.startsAt).toISOString()}`))
+        .map((conference) => ({
+          CompId: conference.stockCode, CompName: conference.companyName, StoredStartsAt: conference.startsAt,
+          Location: conference.location, Content: conference.content, SourceUrl: conference.sourceUrl,
+        }));
+      const results = await dependencies.syncConferences([...source, ...saved]);
       if (results.some((result) => result.authorizationRequired
         || result.status === 'failed' && /invalid_grant|unauthenticated|\b401\b/i.test(result.errorMessage ?? ''))) {
         await dependencies.session.markReauthorizationRequired();

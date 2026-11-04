@@ -48,4 +48,31 @@ describe('desktop-app-lifecycle / login startup', () => {
     }, 'C:\\App\\app-1.0.3\\StockReporterAssistant.exe', true);
     expect(controller.getSettings()).toEqual({ enabled: true, startHidden: true, blockedByWindows: true });
   });
+
+  it('enables hidden login startup for a new profile with no existing login item', () => {
+    let hiddenEnabled = false;
+    const set = vi.fn(({ openAtLogin, args }: { openAtLogin: boolean; args: string[] }) => {
+      if (args[0] === '--hidden') hiddenEnabled = openAtLogin;
+    });
+    const controller = createLoginStartupController({
+      getLoginItemSettings: ({ args }) => ({ openAtLogin: args[0] === '--hidden' && hiddenEnabled }),
+      setLoginItemSettings: set,
+    }, 'C:\\App\\app-1.0.11\\StockReporterAssistant.exe', true);
+
+    expect(controller.applyNewProfileDefaults()).toEqual({ enabled: true, startHidden: true });
+    expect(set).toHaveBeenCalledWith({
+      openAtLogin: true, enabled: true, path: 'C:\\App\\StockReporterAssistant.exe', args: ['--hidden'],
+    });
+  });
+
+  it('preserves an existing login choice instead of reapplying defaults', () => {
+    const set = vi.fn();
+    const controller = createLoginStartupController({
+      getLoginItemSettings: ({ args }) => ({ openAtLogin: args[0] !== '--hidden' }),
+      setLoginItemSettings: set,
+    }, 'C:\\App\\app-1.0.11\\StockReporterAssistant.exe', true);
+
+    expect(controller.applyNewProfileDefaults()).toEqual({ enabled: true, startHidden: false });
+    expect(set).not.toHaveBeenCalled();
+  });
 });

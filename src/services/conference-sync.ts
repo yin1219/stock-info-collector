@@ -1,16 +1,36 @@
 import { buildLegacyCalendarEvent } from '../providers/conference';
+import { redactSensitiveText } from './logger';
 import type { createRepositories } from '../repositories';
 
 type Repositories = ReturnType<typeof createRepositories>;
 type LegacyConference = { CompId: string; CompName: string; Time: string; Location: string; Content: string; SourceUrl?: string };
+export type SavedConference = Omit<LegacyConference, 'Time'> & { StoredStartsAt: string };
 type CalendarEvent = ReturnType<typeof buildLegacyCalendarEvent>;
 type SyncResult = { status: 'expired' | 'existing' | 'synced' | 'failed' | 'pending'; summary: string; conferenceId?: string; errorMessage?: string; authorizationRequired?: boolean };
+
+function safeErrorMessage(error: unknown): string {
+  return redactSensitiveText(error instanceof Error ? error.message : String(error));
+}
 
 function isAuthorizationFailure(error: unknown): boolean {
   if (!error || typeof error !== 'object') return /invalid_grant|unauthenticated/i.test(String(error));
   const value = error as { code?: unknown; status?: unknown; response?: { status?: unknown }; message?: unknown };
   return [value.code, value.status, value.response?.status].some((status) => status === 401 || status === '401')
     || /invalid_grant|unauthenticated/i.test(String(value.message ?? ''));
+}
+
+function buildSavedCalendarEvent(source: SavedConference): CalendarEvent {
+  const start = new Date(source.StoredStartsAt);
+  if (Number.isNaN(start.getTime())) throw new Error(`無法解析已儲存法說會時間：${source.CompId}`);
+  return {
+    summary: `${source.CompId}-${source.CompName} 法說會`,
+    location: source.Location,
+    description: source.Content,
+    start: { dateTime: start.toISOString(), timeZone: 'Asia/Taipei' },
+    end: { dateTime: new Date(start.getTime() + 2 * 60 * 60 * 1000).toISOString(), timeZone: 'Asia/Taipei' },
+    recurrence: [], attendees: [],
+    reminders: { useDefault: false, overrides: [{ method: 'email', minutes: 24 * 60 }, { method: 'popup', minutes: 30 }] },
+  };
 }
 
 export interface CalendarGateway {
@@ -25,15 +45,15 @@ export function createConferenceSyncService(dependencies: {
 }) {
   const now = dependencies.now ?? (() => new Date().toISOString());
   return {
-    async sync(conferences: readonly LegacyConference[]) {
+    async sync(conferences: readonly (LegacyConference | SavedConference)[]) {
       const results: SyncResult[] = new Array(conferences.length);
-      const prepared: Array<{ index: number; source: LegacyConference; event: CalendarEvent; conferenceId: string }> = [];
+      const prepared: Array<{ index: number; source: LegacyConference | SavedConference; event: CalendarEvent; conferenceId: string }> = [];
       for (const [index, source] of conferences.entries()) {
         let event: CalendarEvent;
         try {
-          event = buildLegacyCalendarEvent(source);
+          event = 'StoredStartsAt' in source ? buildSavedCalendarEvent(source) : buildLegacyCalendarEvent(source);
         } catch (error) {
-          results[index] = { status: 'failed', summary: `${source.CompId}-${source.CompName} 法說會`, errorMessage: error instanceof Error ? error.message : String(error) };
+          results[index] = { status: 'failed', summary: `${source.CompId}-${source.CompName} 法說會`, errorMessage: safeErrorMessage(error) };
           continue;
         }
         const current = new Date(now());
@@ -59,18 +79,12 @@ export function createConferenceSyncService(dependencies: {
               sourceUrl: source.SourceUrl,
             }).id;
           });
-          const previousSync = dependencies.repositories.calendarSyncs.find(conferenceId);
-          if (previousSync?.status === 'existing'
-            || previousSync?.status === 'synced' && previousSync.calendarEventId) {
-            results[index] = { status: previousSync.status, summary: event.summary, conferenceId };
-            continue;
-          }
           dependencies.repositories.transaction(() => dependencies.repositories.calendarSyncs.upsert({
             conferenceId: conferenceId!, status: 'pending', updatedAt: now(),
           }));
           prepared.push({ index, source, event, conferenceId });
         } catch (error) {
-          results[index] = { status: 'failed', summary: event.summary, ...(conferenceId ? { conferenceId } : {}), errorMessage: error instanceof Error ? error.message : String(error) };
+          results[index] = { status: 'failed', summary: event.summary, ...(conferenceId ? { conferenceId } : {}), errorMessage: safeErrorMessage(error) };
         }
       }
 
@@ -104,7 +118,7 @@ export function createConferenceSyncService(dependencies: {
             results[index] = { status: 'failed', summary: event.summary, conferenceId, authorizationRequired: true, errorMessage: 'Google Calendar 授權已失效，請重新授權' };
             continue;
           }
-          const errorMessage = error instanceof Error ? error.message : String(error);
+          const errorMessage = safeErrorMessage(error);
           dependencies.repositories.transaction(() => dependencies.repositories.calendarSyncs.upsert({
             conferenceId, status: 'failed', lastError: errorMessage, updatedAt: now(),
           }));

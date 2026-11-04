@@ -30,7 +30,7 @@ function parseRedirect(response: unknown): string {
     || !parsed.result || typeof parsed.result !== 'object' || !('url' in parsed.result)
     || typeof parsed.result.url !== 'string') throw new Error('MOPS 法說會轉址回應格式無效');
   const url = new URL(parsed.result.url);
-  if (url.protocol !== 'https:' || url.hostname !== 'mops.twse.com.tw') {
+  if (url.protocol !== 'https:' || !['mops.twse.com.tw', 'mopsov.twse.com.tw'].includes(url.hostname)) {
     throw new Error('MOPS 法說會轉址網址不是官方 MOPS 主機');
   }
   return url.href;
@@ -40,6 +40,10 @@ function htmlOf(response: unknown): string {
   const value = dataOf(response);
   if (typeof value !== 'string') throw new Error('MOPS 法說會結果不是 HTML');
   return value;
+}
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 export function createLegacyConferenceProvider(
@@ -53,12 +57,22 @@ export function createLegacyConferenceProvider(
       for (const rawCode of stockNumbers) {
         const stockCode = rawCode.trim();
         if (!/^\d{4,6}$/.test(stockCode)) throw new Error(`法說會股票代號格式無效：${stockCode}`);
-        const redirect = await http.post(redirectEndpoint, {
-          apiName: 'ajax_t100sb07_1',
-          parameters: { co_id: stockCode, encodeURIComponent: 1, step: 1, firstin: 1, off: 1, TYPEK: 'all' },
-        });
+        let redirect: unknown;
+        try {
+          redirect = await http.post(redirectEndpoint, {
+            apiName: 'ajax_t100sb07_1',
+            parameters: { co_id: stockCode, encodeURIComponent: 1, step: 1, firstin: 1, off: 1, TYPEK: 'all' },
+          });
+        } catch (error) {
+          throw new Error(`法說會 ${stockCode} 轉址查詢失敗：${errorText(error)}`, { cause: error });
+        }
         const sourceUrl = parseRedirect(redirect);
-        const html = htmlOf(await http.get(sourceUrl));
+        let html: string;
+        try {
+          html = htmlOf(await http.get(sourceUrl));
+        } catch (error) {
+          throw new Error(`法說會 ${stockCode} 結果頁讀取失敗：${errorText(error)}`, { cause: error });
+        }
         const conference = parseConferenceHtml(html);
         if (conference) conferences.push({ ...conference, SourceUrl: sourceUrl });
       }

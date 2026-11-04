@@ -79,7 +79,10 @@ export function createMaterialMonitor(dependencies: {
         ? 'degraded'
         : selected ? (primaryStatus === 'degraded' ? 'degraded' : 'complete')
           : primaryStatus === 'stale' || fallbackStatus === 'stale' ? 'stale' : 'failed';
-      const errorMessage = finalStatus === 'failed' ? [primaryError, fallbackError].filter(Boolean).join('; ') || '重大訊息來源回傳無效狀態' : undefined;
+      const errorMessage = finalStatus === 'failed' ? [
+        primaryError ? `MOPS：${primaryError}` : null,
+        fallbackError ? `MOPS-RSS：${fallbackError}` : null,
+      ].filter(Boolean).join('；') || '重大訊息來源回傳無效狀態' : undefined;
 
       const selectedSource = fallbackUsable ? 'MOPS-RSS' : 'MOPS';
       const records = selected?.events ?? [];

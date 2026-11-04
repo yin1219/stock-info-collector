@@ -25,7 +25,7 @@ describe('notification-delivery / click route integration', () => {
       on: (channel, listener) => { listeners.set(channel, listener); },
       removeListener: (channel) => { listeners.delete(channel); },
     };
-    const api = createReporterApi('test', ipc);
+    const api = createReporterApi(ipc);
     const received: NotificationRoute[] = [];
     api.onNotificationRoute((route) => received.push(route));
     const message = buildMaterialNotification(events)!;
@@ -43,7 +43,7 @@ describe('notification-delivery / click route integration', () => {
 
 it('notification-delivery / test notification / routes a clicked test toast back to settings through preload', async () => {
   const listeners = new Map<string, (event: unknown, payload: unknown) => void>();
-  const api = createReporterApi('test', {
+  const api = createReporterApi({
     invoke: async () => undefined,
     on: (channel, listener) => { listeners.set(channel, listener); },
     removeListener: (channel) => { listeners.delete(channel); },

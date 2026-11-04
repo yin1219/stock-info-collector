@@ -1,6 +1,6 @@
 {
   "name": "stock-info-collector",
-  "version": "1.0.7",
+  "version": "1.0.23",
   "description": "供財經記者使用的本機市場資訊監控與行事曆小幫手",
   "main": ".vite/build/main.js",
   "productName": "股市記者小幫手",
@@ -10,7 +10,7 @@
   "scripts": {
     "start": "electron-forge start",
     "build": "electron-forge package",
-    "make": "electron-forge make",
+    "make": "electron-forge make && node scripts/wrap-windows-installer.cjs",
     "v1:start": "node index.js",
     "test:characterization": "node --test test/characterization/*.test.cjs",
     "test:architecture": "node --test test/architecture/*.test.cjs",
@@ -20,8 +20,10 @@
     "test:ui": "vitest run --project ui",
     "test:e2e": "node scripts/build-e2e-shell.cjs && playwright test",
     "test:windows-smoke": "node scripts/packaged-windows-smoke.cjs",
+    "test:windows-task-smoke": "node --test test/manual/*.test.cjs",
     "test:installer-smoke": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/installer-package-smoke.ps1",
     "accept:google-oauth": "node scripts/build-e2e-shell.cjs && node scripts/manual-google-oauth-acceptance.cjs",
+    "accept:conference-source": "vitest run --config vitest.manual.config.mts",
     "test": "npm run test:characterization && npm run test:architecture && npm run test:unit && npm run test:integration && npm run test:ui && npm run test:e2e && npm run test:traceability",
     "coverage": "vitest run --coverage --project unit --project integration && node scripts/run-quality-gates.cjs"
   },

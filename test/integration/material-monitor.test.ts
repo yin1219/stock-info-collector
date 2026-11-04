@@ -204,6 +204,25 @@ describe('material-event-monitoring / persistence and job integration', () => {
     } finally { database.close(); }
   });
 
+  it('labels independent MOPS detail and RSS failures instead of joining ambiguous errors', async () => {
+    const { database, repositories } = await setup();
+    const monitor = createMaterialMonitor({
+      repositories,
+      primary: { async fetchForDate() { throw new Error('公告明細取得失敗：5345'); } },
+      fallback: { async fetchForDate() { throw new Error('Request failed with status code 404'); } },
+      channel: { async send() {} }, now: () => '2026-09-26T10:00:00.000Z',
+    });
+    try {
+      const run = await monitor.run({ targetDate: '2026-09-26', idempotencyKey: 'material:two-source-failures' });
+      expect(run).toMatchObject({
+        status: 'failed',
+        errorMessage: 'MOPS：公告明細取得失敗：5345；MOPS-RSS：Request failed with status code 404',
+      });
+      expect(repositories.sourceChecks.find(run.jobRunId, 'MOPS')).toMatchObject({ status: 'failed', errorMessage: '公告明細取得失敗：5345' });
+      expect(repositories.sourceChecks.find(run.jobRunId, 'MOPS-RSS')).toMatchObject({ status: 'failed', errorMessage: 'Request failed with status code 404' });
+    } finally { database.close(); }
+  });
+
   it('distinguishes stale and failed results from an empty successful check', async () => {
     const { database, repositories } = await setup();
     const stale = createMaterialMonitor({

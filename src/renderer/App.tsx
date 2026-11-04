@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
-import type { GoogleCalendarStatus, LoginStartupSettings, ReporterRoute, ScheduleSettings } from '../preload/api';
+import type { ConferenceTaskStatus, GoogleCalendarStatus, LegacyConferenceConfigReview, LoginStartupSettings, ReporterRoute, ScheduleSettings } from '../preload/api';
 
 interface WatchlistRow {
   id: string;
@@ -148,13 +148,28 @@ function taipeiDateToday(): string {
   return `${values.year}-${values.month}-${values.day}`;
 }
 
+function conferenceTaskHealth(status: ConferenceTaskStatus | null): { message: string; role: 'status' | 'alert' } | null {
+  if ((status?.kind !== 'legacy' && status?.kind !== 'v2') || !status.lastTaskResult) return null;
+  const owner = status.kind === 'legacy' ? '既有 v1' : 'v2';
+  if (status.lastTaskResult === 0x41303) {
+    return { message: `${owner} 法說會工作尚未執行；請在首次排程後再核對結果。`, role: 'status' };
+  }
+  const code = status.lastTaskResult.toString(16).padStart(8, '0').toUpperCase();
+  return {
+    message: `${owner} 法說會工作最近一次 Windows 工作結果異常（0x${code}）；請檢查工作排程器${status.kind === 'legacy' ? '，v2 不會建立第二個工作' : ''}。`,
+    role: 'alert',
+  };
+}
+
 export function App() {
+  const [appVersion, setAppVersion] = useState<string | null>(null);
   const [rows, setRows] = useState<WatchlistRow[]>([]);
   const [query, setQuery] = useState('');
   const [activeOnly, setActiveOnly] = useState(false);
   const [market, setMarket] = useState<'TWSE' | 'TPEX'>('TWSE');
   const [stockCode, setStockCode] = useState('');
   const [error, setError] = useState('');
+  const [watchlistSyncMessage, setWatchlistSyncMessage] = useState('');
   const [configText, setConfigText] = useState('');
   const [importReport, setImportReport] = useState<ImportReport | null>(null);
   const [busy, setBusy] = useState(false);
@@ -195,12 +210,25 @@ export function App() {
   const [conferenceRows, setConferenceRows] = useState<ConferenceRow[]>([]);
   const [conferenceBusy, setConferenceBusy] = useState(false);
   const [conferenceMessage, setConferenceMessage] = useState('');
+  const [conferenceTaskStatus, setConferenceTaskStatus] = useState<ConferenceTaskStatus | null>(null);
+  const [legacyConfigReview, setLegacyConfigReview] = useState<LegacyConferenceConfigReview | null>(null);
+  const [conferenceTaskBusy, setConferenceTaskBusy] = useState(false);
+  const [conferenceTaskMessage, setConferenceTaskMessage] = useState('');
+
+  useEffect(() => {
+    void window.reporterApi.getVersion().then(setAppVersion).catch(() => setAppVersion(null));
+  }, []);
 
   useEffect(() => {
     if (page !== 'settings') return;
     void Promise.all([window.reporterApi.getScheduleSettings(), window.reporterApi.getScheduleStatus(), window.reporterApi.getLoginStartupSettings()])
       .then(([settings, status, startup]) => { setScheduleSettings(settings); setScheduleStatus(status as ScheduleStatus); setLoginStartupSettings(startup); })
       .catch((cause: unknown) => setError(cause instanceof Error ? cause.message : String(cause)));
+    setConferenceTaskStatus(null);
+    setLegacyConfigReview(null);
+    void window.reporterApi.getConferenceTaskStatus()
+      .then(setConferenceTaskStatus)
+      .catch((cause: unknown) => setConferenceTaskStatus({ kind: 'blocked', reason: cause instanceof Error ? cause.message : String(cause) }));
   }, [page]);
 
   useEffect(() => {
@@ -229,15 +257,35 @@ export function App() {
 
   useEffect(() => {
     if (page !== 'conferences') return;
+    setConferenceTaskStatus(null);
     void Promise.all([window.reporterApi.getGoogleCalendarStatus(), window.reporterApi.listConferences()])
       .then(([status, rows]) => { setGoogleCalendarStatus(status); setConferenceRows(rows as ConferenceRow[]); })
       .catch((cause: unknown) => setError(cause instanceof Error ? cause.message : String(cause)));
+    void window.reporterApi.getConferenceTaskStatus()
+      .then(setConferenceTaskStatus)
+      .catch((cause: unknown) => setConferenceTaskStatus({ kind: 'blocked', reason: cause instanceof Error ? cause.message : String(cause) }));
   }, [page]);
 
   const refresh = useCallback(async () => {
     const result = await window.reporterApi.listWatchlist({ query, activeOnly });
     setRows(result as WatchlistRow[]);
   }, [query, activeOnly]);
+
+  async function reportLegacyWatchlistSync() {
+    try {
+      const task = await window.reporterApi.getConferenceTaskStatus();
+      if (task.kind !== 'legacy' && task.kind !== 'legacy-disabled' && !(task.kind === 'v2' && task.legacyConfigPath)) return;
+      const review = await window.reporterApi.reviewLegacyConferenceConfig();
+      const current = [...review.currentCodes].sort();
+      const active = [...review.activeCodes].sort();
+      if (!review.confirmed || current.length !== active.length || current.some((code, index) => code !== active[index])) {
+        throw new Error('設定與啟用股號不一致，請到「設定」重新核對');
+      }
+      setWatchlistSyncMessage('v1 法說會股號已套用');
+    } catch (cause) {
+      setError(`無法確認 v1 法說會股號已套用：${cause instanceof Error ? cause.message : String(cause)}`);
+    }
+  }
 
   useEffect(() => {
     if (page !== 'material-events') return;
@@ -298,11 +346,14 @@ export function App() {
     }
     setBusy(true);
     setError('');
+    setWatchlistSyncMessage('');
     try {
       await window.reporterApi.addWatchlist({ market, stockCode: normalizedCode });
       setStockCode('');
       await refresh();
+      await reportLegacyWatchlistSync();
     } catch (cause) {
+      await refresh().catch(() => undefined);
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
       setBusy(false);
@@ -321,13 +372,29 @@ export function App() {
   async function applyImport() {
     setBusy(true);
     setError('');
+    setWatchlistSyncMessage('');
     try {
       setImportReport(await window.reporterApi.applyWatchlistImport(configText) as ImportReport);
       await refresh();
+      await reportLegacyWatchlistSync();
     } catch (cause) {
+      await refresh().catch(() => undefined);
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function changeWatchlist(mutation: () => Promise<unknown>) {
+    setError('');
+    setWatchlistSyncMessage('');
+    try {
+      await mutation();
+      await reportLegacyWatchlistSync();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      await refresh().catch(() => undefined);
     }
   }
 
@@ -378,6 +445,64 @@ export function App() {
       setScheduleStatus(await window.reporterApi.getScheduleStatus() as ScheduleStatus);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }
+
+  async function reviewLegacyConferenceConfig() {
+    setConferenceTaskBusy(true);
+    setConferenceTaskMessage('');
+    try {
+      setLegacyConfigReview(await window.reporterApi.reviewLegacyConferenceConfig());
+    } catch (cause) {
+      setLegacyConfigReview(null);
+      setConferenceTaskMessage(`核對舊版股號失敗：${cause instanceof Error ? cause.message : String(cause)}`);
+    } finally {
+      setConferenceTaskBusy(false);
+    }
+  }
+
+  async function confirmLegacyConferenceConfig() {
+    if (!legacyConfigReview) return;
+    setConferenceTaskBusy(true);
+    setConferenceTaskMessage('');
+    try {
+      await window.reporterApi.confirmLegacyConferenceConfig(legacyConfigReview.hash);
+      setLegacyConfigReview(await window.reporterApi.reviewLegacyConferenceConfig());
+      setConferenceTaskMessage('已套用到舊版工作；之後啟用的關注股號會同步至已確認的舊版設定。');
+    } catch (cause) {
+      setLegacyConfigReview(null);
+      setConferenceTaskMessage(`套用舊版股號失敗：${cause instanceof Error ? cause.message : String(cause)}；請重新核對。`);
+    } finally {
+      setConferenceTaskBusy(false);
+    }
+  }
+
+  async function ensureConferenceTask() {
+    setConferenceTaskBusy(true);
+    setConferenceTaskMessage('');
+    try {
+      const status = await window.reporterApi.ensureConferenceTask();
+      setConferenceTaskStatus(status);
+      setConferenceTaskMessage(status.kind === 'v2' ? 'v2 每日工作已就緒。' : status.reason ?? '每日工作尚未就緒。');
+    } catch (cause) {
+      setConferenceTaskMessage(`建立每日工作失敗：${cause instanceof Error ? cause.message : String(cause)}`);
+    } finally {
+      setConferenceTaskBusy(false);
+    }
+  }
+
+  async function switchFromDisabledLegacy() {
+    if (!window.confirm('已完成正式法說會與 Google Calendar 驗收，確認切換為 v2 每日 19:00 排程嗎？已停用的 v1 工作會保留供回退。')) return;
+    setConferenceTaskBusy(true);
+    setConferenceTaskMessage('');
+    try {
+      const status = await window.reporterApi.switchFromDisabledLegacy();
+      setConferenceTaskStatus(status);
+      setConferenceTaskMessage(status.kind === 'v2' ? 'v2 每日工作已就緒。' : status.reason ?? '切換未完成；請重新確認 Windows 工作狀態。');
+    } catch (cause) {
+      setConferenceTaskMessage(`切換每日工作失敗：${cause instanceof Error ? cause.message : String(cause)}`);
+    } finally {
+      setConferenceTaskBusy(false);
     }
   }
 
@@ -566,6 +691,7 @@ export function App() {
     }
   }
 
+  const taskHealth = conferenceTaskHealth(conferenceTaskStatus);
   return (
     <main className="app-shell">
       <div className="sidebar">
@@ -574,7 +700,7 @@ export function App() {
           <p className="eyebrow">STOCK REPORTER ASSISTANT</p>
           <h1>股市記者小幫手</h1>
         </div>
-        <span className="version">v2 · 本機資料</span>
+        <span className="version">v2 · {appVersion ? `版本 ${appVersion}` : '本機資料'}</span>
       </header>
 
       <nav aria-label="主要功能" aria-orientation="horizontal" className="main-nav" role="tablist">
@@ -652,6 +778,7 @@ export function App() {
         </div>
 
         {error && <p role="alert" className="error-message">{error}</p>}
+        {watchlistSyncMessage && <p role="status">{watchlistSyncMessage}</p>}
         {rows.length === 0 ? <p className="empty-state">目前沒有符合條件的公司。</p> : (
           <ul className="company-list">
             {rows.map((row) => (
@@ -662,8 +789,8 @@ export function App() {
                 </div>
                 <span className={`status ${row.active ? 'active' : ''}`}>{row.active ? '監控中' : '已停用'}</span>
                 <button className="text-button" type="button" aria-label={`儲存${row.name}`} onClick={async () => { await window.reporterApi.updateWatchlist({ companyId: row.companyId, category: row.category, notes: row.notes }); await refresh(); }}>儲存</button>
-                <button className="text-button" type="button" aria-label={`${row.active ? '停用' : '啟用'}${row.name}`} onClick={async () => { await window.reporterApi.setWatchlistActive({ companyId: row.companyId, active: !row.active }); await refresh(); }}>{row.active ? '停用' : '啟用'}</button>
-                <button className="text-button danger" type="button" aria-label={`移除${row.name}`} onClick={async () => { await window.reporterApi.removeWatchlist({ companyId: row.companyId }); await refresh(); }}>移除</button>
+                <button className="text-button" type="button" aria-label={`${row.active ? '停用' : '啟用'}${row.name}`} onClick={() => void changeWatchlist(() => window.reporterApi.setWatchlistActive({ companyId: row.companyId, active: !row.active }))}>{row.active ? '停用' : '啟用'}</button>
+                <button className="text-button danger" type="button" aria-label={`移除${row.name}`} onClick={() => void changeWatchlist(() => window.reporterApi.removeWatchlist({ companyId: row.companyId }))}>移除</button>
               </li>
             ))}
           </ul>
@@ -683,7 +810,7 @@ export function App() {
         {disclosureMonitorStatus && <div role="status" aria-label="違約交割來源狀態" className={`source-health ${disclosureMonitorStatus.status}`}>
           <strong>{disclosureMonitorStatus.status === 'complete' ? '資料來源同步完成' : disclosureMonitorStatus.status === 'degraded' ? '資料來源部分降級' : disclosureMonitorStatus.status === 'stale' ? '官方資料尚未更新' : disclosureMonitorStatus.status === 'failed' ? '資料來源檢查失敗' : '資料來源檢查中'}</strong>
           {disclosureMonitorStatus.errorMessage && <p>{disclosureMonitorStatus.errorMessage}</p>}
-          <ul>{Object.entries(disclosureMonitorStatus.markets).map(([source, item]) => <li key={source}>{source}：{disclosureStatusLabel(item.status)}{item.dataDate ? `（資料日期 ${item.dataDate}）` : ''}{item.retryAt ? `；預計重試 ${formatTaipeiDateTime(item.retryAt)}` : ''}{item.errorMessage ? ` — ${item.errorMessage}` : ''}</li>)}</ul>
+          <ul>{Object.entries(disclosureMonitorStatus.markets).map(([source, item]) => <li key={source}>{source}：{disclosureStatusLabel(item.status)}{item.dataDate ? `（資料日期 ${item.dataDate}）` : ''}{item.retryAt ? `；${Date.parse(item.retryAt) > Date.now() ? '預計重試' : '原定重試'} ${formatTaipeiDateTime(item.retryAt)}` : ''}{item.errorMessage ? ` — ${item.errorMessage}` : ''}</li>)}</ul>
         </div>}
         <div className="disclosure-filters">
           <label>資料日期<input aria-label="違約交割資料日期" type="date" value={disclosureDate} onChange={(event) => { setDisclosureDate(event.target.value); void loadDisclosures(event.target.value); }} /></label>
@@ -701,10 +828,18 @@ export function App() {
       </section> : page === 'conferences' ? <section aria-labelledby="conference-title" className="panel">
         <div className="section-heading"><div><p className="eyebrow">CONFERENCES</p><h2 id="conference-title">法說會與 Google Calendar</h2></div><span className={`status ${googleCalendarStatus?.status === 'connected' ? 'active' : 'failed'}`}>{googleCalendarStatus?.status === 'connected' ? 'Google 已連線' : googleCalendarStatus?.status === 'reauthorization-required' ? '需要重新授權' : googleCalendarStatus?.status === 'disconnected' ? '尚未連線' : '尚未設定'}</span></div>
         {error && <p role="alert" className="error-message">{error}</p>}
+        <p role="status">{!conferenceTaskStatus ? '正在確認法說會每日工作…'
+          : conferenceTaskStatus.kind === 'legacy' ? '既有 v1 工作仍是唯一受管法說會排程；v2 手動同步停用，避免同時寫入 Calendar。'
+            : conferenceTaskStatus.kind === 'legacy-disabled' ? 'v1 工作已停用，目前尚無每日排程；可手動驗收法說會與 Calendar，驗收後才切換 v2。'
+            : conferenceTaskStatus.kind === 'v2' ? 'v2 法說會每日工作已就緒；可手動同步。'
+              : conferenceTaskStatus.kind === 'upgrade-v2-time' ? '偵測到舊版 v2 每日 17:45 工作，正在遷移至 19:00；完成前不執行同步。'
+              : conferenceTaskStatus.kind === 'create-v2' ? '尚未建立 v2 法說會每日工作；完成設定後才可手動同步。'
+                : `法說會每日工作未就緒：${conferenceTaskStatus.reason ?? '無法確認唯一寫入者'}`}</p>
+        {taskHealth && <p role={taskHealth.role} className={taskHealth.role === 'alert' ? 'error-message' : undefined}>{taskHealth.message}</p>}
         <div className="conference-actions">
           {googleCalendarStatus?.status === 'disconnected' && <button className="secondary" disabled={conferenceBusy} type="button" onClick={() => void migrateLegacyGoogleToken()}>匯入舊版 token（不刪除原檔）</button>}
           {googleCalendarStatus?.status !== 'connected' && <button disabled={conferenceBusy} type="button" onClick={() => void connectGoogleCalendar()}>{googleCalendarStatus?.status === 'reauthorization-required' ? '重新授權 Google Calendar' : '連線 Google Calendar'}</button>}
-          {googleCalendarStatus?.status === 'connected' && <><button disabled={conferenceBusy} type="button" onClick={() => void syncConferences()}>立即擷取並同步法說會</button><button className="secondary" disabled={conferenceBusy} type="button" onClick={() => void disconnectGoogleCalendar()}>中斷 Google Calendar</button></>}
+          {googleCalendarStatus?.status === 'connected' && <><button disabled={conferenceBusy || !['v2', 'legacy-disabled'].includes(conferenceTaskStatus?.kind ?? '')} type="button" onClick={() => void syncConferences()}>立即擷取並同步法說會</button><button className="secondary" disabled={conferenceBusy} type="button" onClick={() => void disconnectGoogleCalendar()}>中斷 Google Calendar</button></>}
         </div>
         {conferenceMessage && <p role="status">{conferenceMessage}</p>}
         {conferenceRows.length === 0 ? <p className="empty-state">目前沒有已保存的法說會。連線後可擷取關注公司的近期場次。</p> : <div className="conference-list" role="list">
@@ -752,6 +887,39 @@ export function App() {
             </section>
             <button className="save-schedule" type="button" onClick={() => void saveSchedule()}>儲存排程</button>
           </div>
+          <section className="schedule-settings" aria-labelledby="conference-task-title">
+            <h3 id="conference-task-title">法說會每日工作</h3>
+            {!conferenceTaskStatus ? <p role="status">正在確認 Windows 每日工作…</p> : conferenceTaskStatus.kind === 'legacy-disabled' ? <>
+              <p role="status">既有 v1 工作已停用並保留供回退；v2 每日工作尚未啟用。完成正式 Calendar 驗收後可明確切換。</p>
+              {!conferenceTaskStatus.setupReady && <p role="status">切換前請先設定至少一間啟用的關注公司，並完成 Google Calendar 連線。</p>}
+              <button type="button" disabled={conferenceTaskBusy || !conferenceTaskStatus.setupReady} onClick={() => void switchFromDisabledLegacy()}>切換為 v2 每日排程</button>
+            </> : conferenceTaskStatus.kind === 'legacy' ? <>
+              <p>沿用既有 v1 工作；不會另建 v2 每日工作。排程與授權維持原狀。</p>
+              {taskHealth && <p role={taskHealth.role} className={taskHealth.role === 'alert' ? 'error-message' : undefined}>{taskHealth.message}</p>}
+            </> : conferenceTaskStatus.kind === 'v2' ? <>
+                <p>v2 每日工作已建立；Windows 每日 19:00 執行。</p>
+                {taskHealth && <p role={taskHealth.role} className={taskHealth.role === 'alert' ? 'error-message' : undefined}>{taskHealth.message}</p>}
+              </>
+              : conferenceTaskStatus.kind === 'upgrade-v2-time' ? <>
+                <p role="status">偵測到舊版 v2 每日 17:45 工作；會先備份並核對唯一寫入者，再遷移至 19:00。</p>
+                <button type="button" disabled={conferenceTaskBusy} onClick={() => void ensureConferenceTask()}>重試遷移至 19:00</button>
+              </> : conferenceTaskStatus.kind === 'create-v2' ? <>
+                <p>未偵測到既有 v1 工作。完成關注公司與 Google 連線後，v2 會自動建立每日 19:00 的法說會工作；若尚未建立，可在此重試。</p>
+                {!conferenceTaskStatus.setupReady && <p role="status">請先設定關注公司並完成 Google Calendar 連線。</p>}
+                <button type="button" disabled={conferenceTaskBusy || !conferenceTaskStatus.setupReady} onClick={() => void ensureConferenceTask()}>建立 v2 每日工作</button>
+              </> : <p role="alert">{conferenceTaskStatus.reason ?? '無法確認 Windows 每日工作；為避免重複建立，已停止排程設定。'}</p>}
+            {(conferenceTaskStatus?.kind === 'legacy' || conferenceTaskStatus?.kind === 'legacy-disabled' || (conferenceTaskStatus?.kind === 'v2' && conferenceTaskStatus.legacyConfigPath)) && <>
+              <p>修改 v2 關注公司前，請先核對並確認同步至舊版股號設定；尚未確認時不會改動舊版設定。</p>
+              <button type="button" disabled={conferenceTaskBusy} onClick={() => void reviewLegacyConferenceConfig()}>核對舊版股號</button>
+              {legacyConfigReview && <div role="group" aria-label="舊版股號核對">
+                <p>舊版目前：{legacyConfigReview.currentCodes.join('、') || '無'}</p>
+                <p>v2 啟用：{legacyConfigReview.activeCodes.join('、') || '無'}</p>
+                <button type="button" disabled={conferenceTaskBusy || legacyConfigReview.activeCodes.length === 0} onClick={() => void confirmLegacyConferenceConfig()}>確認套用到舊版工作</button>
+                {legacyConfigReview.activeCodes.length === 0 && <p role="status">至少保留一間啟用公司；舊版工作不可寫入空股號。</p>}
+              </div>}
+            </>}
+            {conferenceTaskMessage && <p role={conferenceTaskMessage.includes('失敗') ? 'alert' : 'status'}>{conferenceTaskMessage}</p>}
+          </section>
           <div className="schedule-settings desktop-startup-settings">
             <h3>Windows 登入啟動</h3>
             {!loginStartupSettings ? <p role="status">正在載入登入啟動設定…</p> : <>
@@ -781,10 +949,13 @@ export function App() {
           <strong>{materialMonitorStatus.status === 'complete' ? '資料來源同步完成' : materialMonitorStatus.status === 'degraded' ? '資料來源部分降級' : materialMonitorStatus.status === 'stale' ? '官方資料尚未更新' : materialMonitorStatus.status === 'failed' ? '資料來源檢查失敗' : '資料來源檢查中'}</strong>
           {materialMonitorStatus.errorMessage && <p>{materialMonitorStatus.errorMessage}</p>}
           <ul>{materialMonitorStatus.sources.map((source) => {
-            const details = [source.dataDate ? `資料日期 ${source.dataDate}` : '',
+            const dateLabel = source.source === 'TWSE-reconciliation' || source.source === 'TPEX-reconciliation' ? '出表日期' : '資料日期';
+            const details = [source.dataDate ? `${dateLabel} ${source.dataDate}` : '',
               (source.status === 'complete' || source.status === 'degraded') && typeof source.recordCount === 'number' ? `來源回傳 ${source.recordCount} 筆` : ''].filter(Boolean);
             return <li key={source.source}>{materialSourceName(source.source)}：{monitorSourceStatusLabel(source.status)}{details.length ? `（${details.join('，')}）` : ''}{source.errorMessage ? ` — ${source.errorMessage}` : ''}</li>;
           })}</ul>
+          {materialMonitorStatus.sources.some((source) => source.source === 'TWSE-reconciliation' || source.source === 'TPEX-reconciliation')
+            && <p>對帳的出表日期可能晚於公告發言日期；對帳筆數不等於當日新公告筆數。</p>}
         </div>}
         <div className="list-controls material-controls">
           <label className="search-label">搜尋

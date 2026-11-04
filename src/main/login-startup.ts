@@ -17,6 +17,11 @@ export function createLoginStartupController(app: LoginItemSettingsPort, executa
   const hiddenArgs = ['--hidden'];
   const read = (args: string[]) => app.getLoginItemSettings({ path: launcherPath, args });
   return {
+    applyNewProfileDefaults(): LoginStartupSettings {
+      const current = this.getSettings();
+      if (!packaged || current.enabled) return current;
+      return this.saveSettings({ enabled: true, startHidden: true });
+    },
     getSettings(): LoginStartupSettings {
       if (!packaged) return { enabled: false, startHidden: false };
       const visible = read(visibleArgs);

@@ -1,5 +1,6 @@
 import { open, unlink } from 'node:fs/promises';
 import type { Database as SQLiteDatabase } from 'better-sqlite3';
+import { redactSensitiveData, redactSensitiveText } from './logger';
 
 const dataTables = [
   'companies',
@@ -36,11 +37,21 @@ function sanitizeSetting(value: unknown): { value?: unknown; containsSecret: boo
   return { value: sanitized, containsSecret };
 }
 
+function sanitizeTableValue(key: string, value: unknown): unknown {
+  if (typeof value !== 'string') return redactSensitiveData(value);
+  if (key.endsWith('_json')) {
+    try { return JSON.stringify(redactSensitiveData(JSON.parse(value) as unknown)); }
+    catch { return redactSensitiveText(value); }
+  }
+  return redactSensitiveText(value);
+}
+
 export async function exportUserData(database: SQLiteDatabase, destination: string, exportedAt = new Date().toISOString()): Promise<string> {
   const exportData = database.transaction(() => {
     const tables = Object.fromEntries(dataTables.map((table) => [
       table,
-      database.prepare(`SELECT * FROM ${table}`).all(),
+      (database.prepare(`SELECT * FROM ${table}`).all() as Array<Record<string, unknown>>)
+        .map((row) => Object.fromEntries(Object.entries(row).map(([key, value]) => [key, sanitizeTableValue(key, value)]))),
     ]));
     const settings = database.prepare('SELECT key, value_json, updated_at AS updatedAt FROM settings').all() as Array<{
       key: string;

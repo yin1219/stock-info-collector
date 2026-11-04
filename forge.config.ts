@@ -19,7 +19,7 @@ const config: ForgeConfig = {
     icon: 'assets/app-icon',
     executableName: 'StockReporterAssistant',
     electronZipDir: process.env.REPORTER_ELECTRON_ZIP_DIR || undefined,
-    ...(oauthClientResource ? { extraResource: [oauthClientResource] } : {}),
+    extraResource: [path.resolve('scripts/conference-task.ps1'), ...(oauthClientResource ? [oauthClientResource] : [])],
     ignore: (file: string) => {
       if (!file) return false;
       const normalized = file.replace(/\\/g, '/').replace(/^\/+/, '');

@@ -11,7 +11,7 @@ test('watchlist-management / Electron IPC / removes a watched company while pres
   const userData = await mkdtemp(path.join(os.tmpdir(), 'stock-reporter-remove-e2e-'));
   const app = await electron.launch({
     args: [root], cwd: root,
-    env: { ...process.env, REPORTER_USER_DATA_DIR: userData, REPORTER_TEST_TRAY: '1' },
+    env: { ...process.env, REPORTER_USER_DATA_DIR: userData, REPORTER_TEST_TRAY: '0' },
   });
 
   try {
@@ -54,7 +54,7 @@ test('material-event-monitoring / Electron UI / defaults to watched announcement
   const userData = await mkdtemp(path.join(os.tmpdir(), 'stock-reporter-material-e2e-'));
   const app = await electron.launch({
     args: [root], cwd: root,
-    env: { ...process.env, REPORTER_USER_DATA_DIR: userData, REPORTER_TEST_TRAY: '1' },
+    env: { ...process.env, REPORTER_USER_DATA_DIR: userData, REPORTER_TEST_TRAY: '0' },
   });
   try {
     const window = await app.firstWindow({ timeout: 8_000 });
@@ -116,12 +116,14 @@ test('desktop-app-lifecycle / Electron shell / opens the isolated renderer', asy
     env: {
       ...process.env,
       REPORTER_USER_DATA_DIR: userData,
-      REPORTER_TEST_TRAY: '1',
+      REPORTER_TEST_TRAY: '0',
     },
   });
 
   try {
     const window = await app.firstWindow({ timeout: 8_000 });
+    const nativeWindow = await app.browserWindow(window);
+    await expect.poll(() => nativeWindow.evaluate((candidate) => candidate.isVisible())).toBe(false);
     await expect(window.locator('.sidebar')).toBeVisible();
     const layout = await window.evaluate(() => {
       const sidebar = document.querySelector('.sidebar')!;
@@ -148,6 +150,8 @@ test('desktop-app-lifecycle / Electron shell / opens the isolated renderer', asy
     window.on('pageerror', (error) => console.error(`renderer:pageerror:${error.message}`));
     await expect(window.getByRole('heading', { name: '股市記者小幫手' })).toBeVisible();
     await expect(window).toHaveTitle('股市記者小幫手 v2');
+    const packageVersion = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8')).version as string;
+    await expect(window.locator('.app-header .version')).toHaveText(`v2 · 版本 ${packageVersion}`);
     await expect.poll(() => window.evaluate(() => typeof window.reporterApi.listWatchlist)).toBe('function');
     await expect.poll(() => window.evaluate(() => typeof window.reporterApi.listDisclosures)).toBe('function');
     await expect.poll(() => window.evaluate(() => typeof window.reporterApi.listMaterialEvents)).toBe('function');
@@ -217,12 +221,79 @@ test('desktop-app-lifecycle / Electron shell / opens the isolated renderer', asy
   }
 });
 
+test('desktop-app-lifecycle / responsive product UI / keeps all six pages usable without coupled desktop scrolling', async () => {
+  test.setTimeout(90_000);
+  const root = path.resolve(process.cwd());
+  const userData = await mkdtemp(path.join(os.tmpdir(), 'stock-reporter-responsive-e2e-'));
+  const app = await electron.launch({
+    args: [root], cwd: root,
+    env: { ...process.env, REPORTER_USER_DATA_DIR: userData, REPORTER_TEST_TRAY: '0' },
+  });
+  const pages = [
+    ['總覽', '今日監控總覽'],
+    ['關注公司', '關注公司'],
+    ['重大訊息', '重大訊息'],
+    ['違約交割', '全市場違約交割'],
+    ['法說會', '法說會與 Google Calendar'],
+    ['設定', '監控排程'],
+  ] as const;
+
+  try {
+    const window = await app.firstWindow({ timeout: 8_000 });
+    for (const width of [1280, 960, 600]) {
+      await window.setViewportSize({ width, height: 700 });
+      for (const [tabName, heading] of pages) {
+        const tab = window.getByRole('tab', { name: tabName });
+        await tab.click();
+        await expect(tab).toHaveAttribute('aria-selected', 'true');
+        await expect(window.getByRole('heading', { name: heading, exact: true })).toBeVisible();
+        const horizontalOverflow = await window.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+        expect(horizontalOverflow, `${tabName} at ${width}px`).toBeLessThanOrEqual(1);
+      }
+    }
+
+    await window.setViewportSize({ width: 960, height: 600 });
+    await window.getByRole('tab', { name: '設定' }).click();
+    const scrollState = await window.evaluate(() => {
+      const sidebar = document.querySelector('.sidebar')!;
+      const panel = document.querySelector('.app-shell > .panel')!;
+      const navigation = document.querySelector('.main-nav')!;
+      const navigationTop = navigation.getBoundingClientRect().top;
+      panel.scrollTop = 250;
+      return {
+        panelScrolled: panel.scrollTop > 0,
+        sidebarStayed: sidebar.scrollTop === 0,
+        navigationStayed: Math.abs(navigation.getBoundingClientRect().top - navigationTop) <= 1,
+      };
+    });
+    expect(scrollState).toEqual({ panelScrolled: true, sidebarStayed: true, navigationStayed: true });
+
+    await window.setViewportSize({ width: 960, height: 420 });
+    const shortWindowScrollState = await window.evaluate(() => {
+      const sidebar = document.querySelector('.sidebar')!;
+      const panel = document.querySelector('.app-shell > .panel')!;
+      const panelScrollBefore = panel.scrollTop;
+      sidebar.scrollTop = sidebar.scrollHeight;
+      return {
+        sidebarScrollable: sidebar.scrollTop > 0,
+        panelStayed: panel.scrollTop === panelScrollBefore,
+        settingsTabReachable: document.querySelector('[role="tab"][aria-selected="true"]')?.textContent === '設定',
+      };
+    });
+    expect(shortWindowScrollState).toEqual({ sidebarScrollable: true, panelStayed: true, settingsTabReachable: true });
+  } finally {
+    await app.evaluate(({ app: electronApp }) => electronApp.exit(0)).catch(() => undefined);
+    await app.close();
+    await rm(userData, { recursive: true, force: true });
+  }
+});
+
 test('monitoring-schedule / Electron settings / keeps time and frequency hit targets inside the compact panel', async () => {
   const root = path.resolve(process.cwd());
   const userData = await mkdtemp(path.join(os.tmpdir(), 'stock-reporter-settings-e2e-'));
   const app = await electron.launch({
     args: [root], cwd: root,
-    env: { ...process.env, REPORTER_USER_DATA_DIR: userData, REPORTER_TEST_TRAY: '1' },
+    env: { ...process.env, REPORTER_USER_DATA_DIR: userData, REPORTER_TEST_TRAY: '0' },
   });
   try {
     const window = await app.firstWindow({ timeout: 8_000 });
@@ -293,6 +364,7 @@ test('desktop-app-lifecycle / isolated tray harness / opens a visible window onl
     const window = await app.firstWindow({ timeout: 8_000 });
     const nativeWindow = await app.browserWindow(window);
     await expect.poll(() => nativeWindow.evaluate((candidate) => candidate.isVisible())).toBe(true);
+    await expect.poll(() => nativeWindow.evaluate((candidate) => candidate.getTitle())).toContain('隔離預覽');
     await expect(window.getByRole('heading', { name: '股市記者小幫手' })).toBeVisible();
     await expect.poll(async () => {
       const log = await readFile(path.join(userData, 'logs', 'application.log'), 'utf8');
@@ -328,6 +400,88 @@ test('desktop-app-lifecycle / isolated tray harness / opens a visible window onl
   }
 });
 
+test('conference-calendar-sync / scheduled entry / exits without a window or live IO when isolated task ownership is unknown', async () => {
+  const root = path.resolve(process.cwd());
+  const userData = await mkdtemp(path.join(os.tmpdir(), 'stock-reporter-conference-headless-e2e-'));
+  const electronExecutable = require('electron') as string;
+  const child = spawn(electronExecutable, [root, '--conference-scheduled'], {
+    cwd: root, windowsHide: true, stdio: 'ignore',
+    env: { ...process.env, REPORTER_USER_DATA_DIR: userData, REPORTER_TEST_TRAY: '0' },
+  });
+  let timeout: NodeJS.Timeout | undefined;
+  try {
+    const exitCode = await Promise.race([
+      new Promise<number | null>((resolve, reject) => {
+        child.once('error', reject);
+        child.once('exit', resolve);
+      }),
+      new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(() => reject(new Error('scheduled entry did not exit')), 8_000);
+      }),
+    ]);
+    expect(exitCode).toBe(0);
+    const log = await readFile(path.join(userData, 'logs', 'application.log'), 'utf8');
+    expect(log).toContain('conference-scheduled-not-ready');
+    expect(log).not.toContain('renderer-load-started');
+  } finally {
+    if (timeout) clearTimeout(timeout);
+    if (child.exitCode === null) {
+      child.kill();
+      await new Promise((resolve) => child.once('exit', resolve));
+    }
+    await rm(userData, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  }
+});
+
+test('conference-calendar-sync / scheduled entry / reaches the existing background instance', async () => {
+  const root = path.resolve(process.cwd());
+  const userData = await mkdtemp(path.join(os.tmpdir(), 'stock-reporter-conference-second-instance-e2e-'));
+  const app = await electron.launch({
+    args: [root], cwd: root,
+    env: { ...process.env, REPORTER_USER_DATA_DIR: userData, REPORTER_TEST_TRAY: '1' },
+  });
+  let scheduled: ReturnType<typeof spawn> | undefined;
+  let timeout: NodeJS.Timeout | undefined;
+  try {
+    const window = await app.firstWindow({ timeout: 8_000 });
+    const nativeWindow = await app.browserWindow(window);
+    await nativeWindow.evaluate((candidate) => candidate.close());
+    await expect.poll(() => nativeWindow.evaluate((candidate) => candidate.isVisible())).toBe(false);
+
+    const electronExecutable = require('electron') as string;
+    scheduled = spawn(electronExecutable, [root, '--conference-scheduled'], {
+      cwd: root, windowsHide: true, stdio: 'ignore',
+      env: { ...process.env, REPORTER_USER_DATA_DIR: userData, REPORTER_TEST_TRAY: '1' },
+    });
+    const exitCode = await Promise.race([
+      new Promise<number | null>((resolve, reject) => {
+        scheduled!.once('error', reject);
+        scheduled!.once('exit', resolve);
+      }),
+      new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(() => reject(new Error('second scheduled instance did not exit')), 8_000);
+      }),
+    ]);
+    expect(exitCode).toBe(0);
+    await expect.poll(async () => {
+      const log = await readFile(path.join(userData, 'logs', 'application.log'), 'utf8');
+      return (log.match(/"event":"conference-scheduled-not-ready"/g) ?? []).length;
+    }).toBe(1);
+    await expect.poll(() => nativeWindow.evaluate((candidate) => candidate.isVisible())).toBe(false);
+    const log = await readFile(path.join(userData, 'logs', 'application.log'), 'utf8');
+    expect(log.match(/"event":"main-ready"/g)).toHaveLength(1);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+    if (scheduled?.exitCode === null) {
+      scheduled.kill();
+      await new Promise((resolve) => scheduled!.once('exit', resolve));
+    }
+    await app.evaluate(({ app: electronApp }) => electronApp.exit(0)).catch(() => undefined);
+    await app.close();
+    await rm(userData, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  }
+});
+
 test('monitoring-schedule / opt-in live-source harness / exposes manual checks without an automatic startup run', async () => {
   const root = path.resolve(process.cwd());
   const userData = await mkdtemp(path.join(os.tmpdir(), 'stock-reporter-live-source-e2e-'));
@@ -345,7 +499,7 @@ test('monitoring-schedule / opt-in live-source harness / exposes manual checks w
     app = await electron.launch({
       args: [root], cwd: root,
       env: { ...process.env, REPORTER_USER_DATA_DIR: userData, REPORTER_TEST_LIVE_SOURCES: '1',
-        REPORTER_TEST_TRAY: '1', REPORTER_TEST_HTTP_PROXY: `http://127.0.0.1:${address.port}/source` },
+        REPORTER_TEST_TRAY: '0', REPORTER_TEST_HTTP_PROXY: `http://127.0.0.1:${address.port}/source` },
     });
     const window = await app.firstWindow({ timeout: 8_000 });
     await window.getByRole('tab', { name: '設定' }).click();
@@ -398,7 +552,7 @@ test('default-disclosure-monitoring / Electron manual check / shows stale offici
       env: {
         ...process.env,
         REPORTER_USER_DATA_DIR: userData,
-        REPORTER_TEST_TRAY: '1',
+        REPORTER_TEST_TRAY: '0',
         REPORTER_TEST_LIVE_SOURCES: '1',
         REPORTER_TEST_HTTP_PROXY: `http://127.0.0.1:${address.port}/source`,
       },

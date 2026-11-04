@@ -59,4 +59,27 @@ describe('local-data-management / versioned export', () => {
       database.close();
     }
   });
+
+  it('redacts credential fragments embedded in persisted failure text and JSON summaries', async () => {
+    const paths = await createTestPaths();
+    cleanups.push(paths.cleanup);
+    const database = openDatabase(paths.database);
+    const repositories = createRepositories(database);
+    const now = '2026-09-29T00:00:00.000Z';
+    const run = repositories.jobRuns.start({ kind: 'conference-calendar-sync', idempotencyKey: 'export-redaction', startedAt: now });
+    repositories.jobRuns.finish(run.id, {
+      status: 'failed', finishedAt: now,
+      summary: { access_token: 'SUMMARY-TOKEN-MUST-NOT-EXPORT', message: 'Bearer SUMMARY-BEARER-MUST-NOT-EXPORT' },
+      errorMessage: 'Calendar read ECONNRESET; access_token=ERROR-TOKEN-MUST-NOT-EXPORT',
+    });
+    try {
+      const destination = path.join(paths.root, 'redacted-export.json');
+      await exportUserData(database, destination, now);
+      const serialized = await readFile(destination, 'utf8');
+      expect(serialized).not.toContain('SUMMARY-TOKEN-MUST-NOT-EXPORT');
+      expect(serialized).not.toContain('SUMMARY-BEARER-MUST-NOT-EXPORT');
+      expect(serialized).not.toContain('ERROR-TOKEN-MUST-NOT-EXPORT');
+      expect(serialized).toContain('Calendar read ECONNRESET');
+    } finally { database.close(); }
+  });
 });

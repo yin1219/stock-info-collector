@@ -24,6 +24,9 @@ export interface LoginStartupSettings {
 }
 
 export type GoogleCalendarStatus = { status: 'not-configured' | 'disconnected' | 'connected' | 'reauthorization-required' };
+export type ConferenceTaskStatus = { kind: 'legacy' | 'legacy-disabled' | 'v2' | 'blocked' | 'create-v2' | 'upgrade-v2-time'; reason?: string; configPath?: string; legacyConfigPath?: string; setupReady?: boolean; lastTaskResult?: number };
+export type LegacyConferenceConfigReview = { configPath: string; hash: string; currentCodes: string[]; activeCodes: string[]; confirmed: boolean };
+export type LegacyConferenceConfigApply = { status: 'applied' | 'unchanged'; stockNumbers: string[]; backupPath?: string };
 export type DataExportResult = { status: 'cancelled' } | { status: 'exported'; destination: string };
 
 function isReporterRoute(value: unknown): value is ReporterRoute {
@@ -36,7 +39,7 @@ function isReporterRoute(value: unknown): value is ReporterRoute {
 }
 
 export interface ReporterApi {
-  getVersion(): string;
+  getVersion(): Promise<string>;
   listWatchlist(filter?: { query?: string; activeOnly?: boolean }): Promise<unknown>;
   addWatchlist(input: { market: 'TWSE' | 'TPEX'; stockCode: string; category?: string; notes?: string }): Promise<unknown>;
   updateWatchlist(input: { companyId: string; category: string; notes: string }): Promise<unknown>;
@@ -67,12 +70,17 @@ export interface ReporterApi {
   disconnectGoogleCalendar(): Promise<GoogleCalendarStatus>;
   listConferences(): Promise<unknown[]>;
   syncConferences(): Promise<unknown>;
+  getConferenceTaskStatus(): Promise<ConferenceTaskStatus>;
+  ensureConferenceTask(): Promise<ConferenceTaskStatus>;
+  switchFromDisabledLegacy(): Promise<ConferenceTaskStatus>;
+  reviewLegacyConferenceConfig(): Promise<LegacyConferenceConfigReview>;
+  confirmLegacyConferenceConfig(hash: string): Promise<LegacyConferenceConfigApply>;
   onNotificationRoute(listener: (route: ReporterRoute) => void): () => void;
 }
 
-export function createReporterApi(version: string, ipc: IpcInvoker): ReporterApi {
+export function createReporterApi(ipc: IpcInvoker): ReporterApi {
   const api: ReporterApi = {
-    getVersion: () => version,
+    getVersion: () => ipc.invoke('desktop:get-app-version') as Promise<string>,
     listWatchlist: (filter = {}) => ipc.invoke('watchlist:list', filter),
     addWatchlist: (input) => ipc.invoke('watchlist:add', input),
     updateWatchlist: (input) => ipc.invoke('watchlist:update', input),
@@ -103,6 +111,11 @@ export function createReporterApi(version: string, ipc: IpcInvoker): ReporterApi
     disconnectGoogleCalendar: () => ipc.invoke('calendar:disconnect') as Promise<GoogleCalendarStatus>,
     listConferences: () => ipc.invoke('calendar:list') as Promise<unknown[]>,
     syncConferences: () => ipc.invoke('calendar:sync'),
+    getConferenceTaskStatus: () => ipc.invoke('conference-task:status') as Promise<ConferenceTaskStatus>,
+    ensureConferenceTask: () => ipc.invoke('conference-task:ensure') as Promise<ConferenceTaskStatus>,
+    switchFromDisabledLegacy: () => ipc.invoke('conference-task:switch-disabled-legacy', { confirmation: 'SWITCH_TO_V2_DAILY' }) as Promise<ConferenceTaskStatus>,
+    reviewLegacyConferenceConfig: () => ipc.invoke('conference-task:review-legacy') as Promise<LegacyConferenceConfigReview>,
+    confirmLegacyConferenceConfig: (hash) => ipc.invoke('conference-task:confirm-legacy', { hash }) as Promise<LegacyConferenceConfigApply>,
     onNotificationRoute(listener) {
       const handler = (_event: unknown, payload: unknown) => {
         if (isReporterRoute(payload)) listener(payload);

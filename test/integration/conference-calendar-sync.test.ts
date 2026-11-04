@@ -13,16 +13,17 @@ const conference = (CompId: string, CompName: string, Time: string) => ({
 });
 
 describe('conference-calendar-sync / service integration', () => {
-  it('keeps a locally synced conference idempotent without querying Calendar again', async () => {
+  it('rechecks a locally synced conference and does not insert while the remote event still exists', async () => {
     paths = await createTestPaths();
     const database = openDatabase(paths.database);
     const repositories = createRepositories(database);
     let calendarCalls = 0;
+    let remoteExists = false;
     const service = createConferenceSyncService({
       repositories,
       calendar: {
-        async hasEvent() { calendarCalls += 1; return false; },
-        async insert() { calendarCalls += 1; return { id: 'existing-local-event-id' }; },
+        async hasEvent() { calendarCalls += 1; return remoteExists; },
+        async insert() { calendarCalls += 1; remoteExists = true; return { id: 'existing-local-event-id' }; },
       },
       now: () => '2026-09-25T00:00:00.000Z',
     });
@@ -33,10 +34,10 @@ describe('conference-calendar-sync / service integration', () => {
       expect(calendarCalls).toBe(2);
 
       const second = await service.sync([source]);
-      expect(second[0]).toMatchObject({ status: 'synced', conferenceId: first[0].conferenceId });
-      expect(calendarCalls).toBe(2);
+      expect(second[0]).toMatchObject({ status: 'existing', conferenceId: first[0].conferenceId });
+      expect(calendarCalls).toBe(3);
       expect(repositories.calendarSyncs.find(first[0].conferenceId!)).toMatchObject({
-        status: 'synced', calendarEventId: 'existing-local-event-id',
+        status: 'existing',
       });
     } finally { database.close(); }
   });
@@ -50,7 +51,7 @@ describe('conference-calendar-sync / service integration', () => {
     const service = createConferenceSyncService({
       repositories,
       calendar: {
-        async hasEvent() { lookups += 1; return lookups === 1; },
+        async hasEvent() { lookups += 1; return true; },
         async insert() { inserts += 1; return { id: 'should-not-exist' }; },
       },
       now: () => '2026-09-25T00:00:00.000Z',
@@ -61,7 +62,60 @@ describe('conference-calendar-sync / service integration', () => {
       const second = await service.sync([source]);
       expect(first[0].status).toBe('existing');
       expect(second[0].status).toBe('existing');
-      expect(lookups).toBe(1);
+      expect(lookups).toBe(2);
+      expect(inserts).toBe(0);
+    } finally { database.close(); }
+  });
+
+  it.each(['existing', 'synced'] as const)('recreates a future event deleted from Google after local status %s', async (priorStatus) => {
+    paths = await createTestPaths();
+    const database = openDatabase(paths.database);
+    const repositories = createRepositories(database);
+    let remoteExists = priorStatus === 'existing';
+    let inserts = 0;
+    let lookups = 0;
+    const service = createConferenceSyncService({
+      repositories,
+      calendar: {
+        async hasEvent() { lookups += 1; return remoteExists; },
+        async insert() { inserts += 1; remoteExists = true; return { id: `replacement-${inserts}` }; },
+      },
+      now: () => '2026-09-25T00:00:00.000Z',
+    });
+    try {
+      const source = conference('2454', '聯發科技股份有限公司', '115/09/28 時間：14 點 30 分 (24小時制)');
+      const first = await service.sync([source]);
+      expect(first[0].status).toBe(priorStatus);
+      remoteExists = false;
+      const second = await service.sync([source]);
+      expect(second[0]).toMatchObject({ status: 'synced', conferenceId: first[0].conferenceId });
+      expect(lookups).toBe(2);
+      expect(inserts).toBe(priorStatus === 'synced' ? 2 : 1);
+      expect(repositories.calendarSyncs.find(first[0].conferenceId!)).toMatchObject({
+        status: 'synced', calendarEventId: `replacement-${inserts}`,
+      });
+    } finally { database.close(); }
+  });
+
+  it('does not replace a previously existing event when the remote lookup fails', async () => {
+    paths = await createTestPaths();
+    const database = openDatabase(paths.database);
+    const repositories = createRepositories(database);
+    let lookup = 0;
+    let inserts = 0;
+    const service = createConferenceSyncService({
+      repositories,
+      calendar: {
+        async hasEvent() { if (++lookup === 1) return true; throw new Error('temporary Calendar lookup failure'); },
+        async insert() { inserts += 1; return { id: 'unexpected' }; },
+      },
+      now: () => '2026-09-25T00:00:00.000Z',
+    });
+    try {
+      const source = conference('2454', '聯發科技股份有限公司', '115/09/28 時間：14 點 30 分 (24小時制)');
+      expect((await service.sync([source]))[0].status).toBe('existing');
+      const retry = await service.sync([source]);
+      expect(retry[0]).toMatchObject({ status: 'failed', errorMessage: 'temporary Calendar lookup failure' });
       expect(inserts).toBe(0);
     } finally { database.close(); }
   });
@@ -148,6 +202,26 @@ describe('conference-calendar-sync / service integration', () => {
       expect(repositories.calendarSyncs.find(results[2].conferenceId!)).toMatchObject({ status: 'synced', calendarEventId: null });
       expect(results[3]).toMatchObject({ status: 'failed', errorMessage: 'raw calendar insertion failure' });
       expect(repositories.calendarSyncs.find(results[3].conferenceId!)).toMatchObject({ status: 'failed', lastError: 'raw calendar insertion failure' });
+    } finally { database.close(); }
+  });
+
+  it('does not persist or return a token embedded in a Calendar lookup failure', async () => {
+    paths = await createTestPaths();
+    const database = openDatabase(paths.database);
+    const repositories = createRepositories(database);
+    const service = createConferenceSyncService({
+      repositories,
+      calendar: {
+        async hasEvent() { throw new Error('Google timeout; access_token=LOOKUP-TOKEN-MUST-NOT-SAVE'); },
+        async insert() { return {}; },
+      },
+      now: () => '2026-09-25T00:00:00.000Z',
+    });
+    try {
+      const result = await service.sync([conference('2454', '聯發科技', '115/09/29 時間：10 點 0 分 (24小時制)')]);
+      expect(result[0].status).toBe('failed');
+      expect(result[0].errorMessage).not.toContain('LOOKUP-TOKEN-MUST-NOT-SAVE');
+      expect(repositories.calendarSyncs.find(result[0].conferenceId!)?.lastError).not.toContain('LOOKUP-TOKEN-MUST-NOT-SAVE');
     } finally { database.close(); }
   });
 
