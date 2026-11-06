@@ -11,8 +11,8 @@ async function main() {
     : path.resolve(process.cwd(), 'artifacts/forge-out/股市記者小幫手-win32-x64/StockReporterAssistant.exe');
   await access(executable).catch(() => { throw new Error('找不到 packaged app；請先執行 npm run build'); });
   const { extractFile } = await import('@electron/asar');
-  const notices = extractFile(path.join(path.dirname(executable), 'resources', 'app.asar'), 'assets/third-party-notices.txt').toString('utf8');
-  const driverLicense = await readFile(path.resolve(process.cwd(), 'node_modules/driver.js/license'), 'utf8');
+  const notices = extractFile(path.join(path.dirname(executable), 'resources', 'app.asar'), 'assets/third-party-notices.txt').toString('utf8').replace(/\r\n/g, '\n');
+  const driverLicense = (await readFile(path.resolve(process.cwd(), 'node_modules/driver.js/license'), 'utf8')).replace(/\r\n/g, '\n');
   assert.ok(notices.includes(driverLicense), 'packaged app must include the full Driver.js MIT notice');
 
   const isolatedRoot = await mkdtemp(path.join(os.tmpdir(), 'stock-reporter-packaged-smoke-'));

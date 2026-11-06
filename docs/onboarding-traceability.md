@@ -58,3 +58,9 @@ TDD第一階段已見unit缺少模組失敗，新增內容與偏好後3項通過
 2026-11-06使用者要求先commit／push後關機，安裝檔稍後接續。1.0.24完整npm test通過，包含217 unit、145 integration、92 React、18 Electron、52 architecture與4 v1 characterization；coverage gate（lines93.68%、branches83.84%）、TypeScript與全部四個OpenSpec strict通過。第一輪make／installer archive／packaged smoke通過，但發現Driver.js MIT全文未隨bundle附上，故加入assets/third-party-notices.txt及packaged smoke全文斷言。新增斷言已在舊包重現缺檔失敗，第二輪make已完成Squirrel包，單檔wrapper壓縮及最後installer／packaged smoke待完成。
 
 接續時先查git與目前make輸出狀態。只分享最終驗證成功的StockReporterAssistantSetup.exe。Google desktop client僅依既有授權暫存封裝，原始client與token不得提交；確認artifacts/oauth-release-*暫存已清除。原index.js、.agents/及.codex-resume.ps1保留未提交。外資CSV／CMoney真實分類核對仍為獨立未完成項。
+
+### 1.0.24 最終封裝完成
+
+2026-11-06接續確認單檔wrapper已完成，installer archive smoke通過，包含已授權desktop OAuth client且無使用者token。Driver.js MIT全文實際已帶入，原精確字串斷言因Git／Windows CRLF與npm LF差異失敗；保留失敗證據後僅正規化換行，隔離packaged Windows smoke通過。已核對NUPKG內app.asar與通過smoke的程式SHA256一致，並驗側欄版本1.0.24。
+
+最終可分享單檔為 `artifacts/forge-out/make/squirrel.windows/x64/StockReporterAssistantSetup.exe`，167784448 bytes，SHA256 `37DFEC6DB84D2D6F998781C57747999360184A4661D82059532CD1DC3A70FD11`。安裝器未簽章。OAuth client暫存資料夾為0。正式userData、Calendar及Windows工作維持本次封裝驗收界線。外資分類的未完成項維持原狀。
