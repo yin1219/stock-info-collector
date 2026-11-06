@@ -3,6 +3,10 @@ import type { Database as SQLiteDatabase } from 'better-sqlite3';
 import { redactSensitiveData, redactSensitiveText } from './logger';
 
 const dataTables = [
+  'market_days',
+  'market_revisions',
+  'market_notices',
+  'market_foreign_comparisons',
   'companies',
   'watchlist_entries',
   'material_events',

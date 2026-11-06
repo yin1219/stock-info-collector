@@ -1,6 +1,7 @@
 dist/
 out/
 artifacts/
+/data/
 .vite/
 coverage/
 test-results/

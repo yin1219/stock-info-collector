@@ -1,6 +1,6 @@
 {
   "name": "stock-info-collector",
-  "version": "1.0.23",
+  "version": "1.0.24",
   "description": "供財經記者使用的本機市場資訊監控與行事曆小幫手",
   "main": ".vite/build/main.js",
   "productName": "股市記者小幫手",
@@ -8,6 +8,9 @@
     "node": "22.x"
   },
   "scripts": {
+    "demo": "vite --config vite.demo.config.mts",
+    "build:demo": "vite build --config vite.demo.config.mts",
+    "test:demo": "playwright test --config playwright.demo.config.ts",
     "start": "electron-forge start",
     "build": "electron-forge package",
     "make": "electron-forge make && node scripts/wrap-windows-installer.cjs",
@@ -63,6 +66,7 @@
     "better-sqlite3": "13.0.3",
     "cheerio": "^1.0.0-rc.12",
     "config": "^3.3.11",
+    "driver.js": "1.10.2",
     "googleapis": "^105.0.0",
     "log4js": "^6.9.1",
     "react": "19.3.0",

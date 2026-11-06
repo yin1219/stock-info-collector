@@ -66,8 +66,12 @@ import { registerGoogleCalendarIpc } from './google-calendar-ipc';
 import { createDataExportController } from './data-export-controller';
 import { registerDataExportIpc } from './data-export-ipc';
 import { exportUserData } from '../services/export';
+import { createMarketRecordsService } from '../services/market-records';
+import { officialTradingDay } from '../providers/market-records';
+import { registerMarketRecordsIpc } from './market-records-ipc';
 
 let mainWindow: BrowserWindow | null = null;
+let stopMarketRecords: (() => void) | undefined;
 let applicationDatabase: ReturnType<typeof openDatabase> | null = null;
 let unregisterWatchlistHandlers: (() => void) | undefined;
 let unregisterDisclosureHandlers: (() => void) | undefined;
@@ -312,6 +316,48 @@ function initializeApplicationServices(): void {
     },
   });
   const repositories = createRepositories(applicationDatabase);
+  const automaticMarketUpdates =
+    !process.env.REPORTER_USER_DATA_DIR && !isScheduledConferenceInvocation;
+  const marketRecords = createMarketRecordsService({
+    db: applicationDatabase,
+    now: () => new Date(),
+    automaticUpdatesEnabled: automaticMarketUpdates,
+    fetchTradingDay: async (date) => {
+      if (process.env.REPORTER_USER_DATA_DIR) throw new Error('隔離預覽不連正式資料來源');
+      return officialTradingDay((await axios.get('https://openapi.twse.com.tw/v1/holidaySchedule/holidaySchedule', { timeout: 12000, maxContentLength: 2000000 })).data, date);
+    },
+    fetchIndex: async () => {
+      if (process.env.REPORTER_USER_DATA_DIR) throw new Error('隔離預覽不連正式資料來源');
+      return (await axios.get('https://openapi.twse.com.tw/v1/indicesReport/MI_5MINS_HIST', { timeout: 12000, maxContentLength: 2000000 })).data;
+    },
+    notify: (title, body) => {
+      if (process.env.REPORTER_USER_DATA_DIR || !Notification.isSupported()) return false;
+      const notification = new Notification({ title, body });
+      notification.on('click', () => {
+        if (!mainWindow || mainWindow.isDestroyed()) createWindow();
+        mainWindow?.show(); mainWindow?.focus();
+        mainWindow?.webContents.send('notification:navigate', { type: 'market-records' });
+      });
+      notification.show();
+    },
+  });
+  const unregisterMarket = registerMarketRecordsIpc(ipcMain, marketRecords, async (kind) => {
+    if (!mainWindow || mainWindow.isDestroyed()) return null;
+    const result = await dialog.showOpenDialog(mainWindow, { title: '匯入盤面日資料', properties: ['openFile'], filters: [{ name: kind === 'csv' ? 'TWSE CSV' : 'CMoney Excel', extensions: [kind === 'csv' ? 'csv' : 'xlsx'] }] });
+    if (result.canceled || !result.filePaths[0]) return null;
+    const stat = await import('node:fs/promises').then(fs => fs.stat(result.filePaths[0]));
+    if (stat.size > 20000000) throw new Error('匯入檔案超過20MB');
+    return readFile(result.filePaths[0]);
+  }, event => isTrustedMainFrame(event));
+  const marketLifecycle = startSchedulerLifecycle({
+    isolated: !automaticMarketUpdates,
+    createScheduler: () => ({ tick: marketRecords.tick, catchUp: marketRecords.tick }),
+    powerMonitor,
+    setInterval,
+    clearInterval,
+    onError: error => logger.error('market-records-update-failed', error),
+  });
+  stopMarketRecords = () => { unregisterMarket(); marketLifecycle?.stop(); };
   const googleCalendarSession = createGoogleCalendarSession({
     store: secretStore,
     defaultClientConfiguration: loadApplicationOAuthClientConfiguration(),
@@ -681,6 +727,7 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', () => {
+  stopMarketRecords?.();
   stopOutboxRecovery?.();
   stopOutboxRecovery = undefined;
   stopTestNotification?.();

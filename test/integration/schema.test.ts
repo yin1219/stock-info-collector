@@ -30,7 +30,7 @@ describe('local-data-management / SQLite application schema', () => {
       expect(columns.map(({ name }) => name)).toEqual(expect.arrayContaining([
         'source', 'source_url', 'discovered_at', 'read_at', 'deleted_at', 'event_type',
       ]));
-      expect(database.prepare('SELECT MAX(version) AS version FROM schema_migrations').get()).toEqual({ version: 5 });
+      expect(database.prepare('SELECT MAX(version) AS version FROM schema_migrations').get()).toEqual({ version: 6 });
     } finally {
       database.close();
     }
@@ -66,7 +66,7 @@ describe('local-data-management / SQLite application schema', () => {
     try {
       const columns = database.pragma('table_info(conferences)') as Array<{ name: string }>;
       expect(columns.map(({ name }) => name)).toContain('source_url');
-      expect(database.prepare('SELECT MAX(version) AS version FROM schema_migrations').get()).toEqual({ version: 5 });
+      expect(database.prepare('SELECT MAX(version) AS version FROM schema_migrations').get()).toEqual({ version: 6 });
     } finally { database.close(); }
   });
 

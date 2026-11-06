@@ -36,7 +36,7 @@ describe('local-data-management / SQLite migrations', () => {
     const reopened = openDatabase(databasePath);
     try {
       expect(reopened.prepare('SELECT version FROM schema_migrations ORDER BY version').all())
-        .toEqual([{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }]);
+        .toEqual([{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }, { version: 6 }]);
     } finally {
       reopened.close();
     }
@@ -50,7 +50,7 @@ describe('local-data-management / SQLite migrations', () => {
         .run('company-1', 'TWSE', '2330', '測試公司', '2026-09-26T10:00:00Z');
       prior.prepare('INSERT INTO material_events (id, company_id, source_key, content_fingerprint, title, content, published_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
         .run('event-1', 'company-1', 'mops:old', 'hash', '舊公告', '完整內文', '2026-09-26T10:00:00Z');
-      prior.exec('DROP TABLE material_event_deletion_audit; ALTER TABLE material_events DROP COLUMN deleted_at; DELETE FROM schema_migrations WHERE version = 5');
+      prior.exec('DROP TABLE material_event_deletion_audit; ALTER TABLE material_events DROP COLUMN deleted_at; DROP TABLE market_days; DROP TABLE market_revisions; DROP TABLE market_notices; DROP TABLE market_foreign_comparisons; DELETE FROM schema_migrations WHERE version >= 5');
     } finally { prior.close(); }
 
     await unlink(`${databasePath}.pre-v5.backup`);
@@ -59,7 +59,7 @@ describe('local-data-management / SQLite migrations', () => {
     try {
       expect(upgraded.prepare('SELECT deleted_at AS deletedAt FROM material_events WHERE id = ?').get('event-1'))
         .toEqual({ deletedAt: null });
-      expect(upgraded.prepare('SELECT MAX(version) AS version FROM schema_migrations').get()).toEqual({ version: 5 });
+      expect(upgraded.prepare('SELECT MAX(version) AS version FROM schema_migrations').get()).toEqual({ version: 6 });
     } finally { upgraded.close(); }
 
     const backup = new Database(`${databasePath}.pre-v5.backup`, { readonly: true });

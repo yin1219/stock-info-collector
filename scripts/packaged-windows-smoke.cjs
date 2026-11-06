@@ -10,6 +10,11 @@ async function main() {
     ? path.resolve(process.env.REPORTER_PACKAGED_EXECUTABLE)
     : path.resolve(process.cwd(), 'artifacts/forge-out/股市記者小幫手-win32-x64/StockReporterAssistant.exe');
   await access(executable).catch(() => { throw new Error('找不到 packaged app；請先執行 npm run build'); });
+  const { extractFile } = await import('@electron/asar');
+  const notices = extractFile(path.join(path.dirname(executable), 'resources', 'app.asar'), 'assets/third-party-notices.txt').toString('utf8');
+  const driverLicense = await readFile(path.resolve(process.cwd(), 'node_modules/driver.js/license'), 'utf8');
+  assert.ok(notices.includes(driverLicense), 'packaged app must include the full Driver.js MIT notice');
+
   const isolatedRoot = await mkdtemp(path.join(os.tmpdir(), 'stock-reporter-packaged-smoke-'));
   const userData = path.join(isolatedRoot, 'userData');
   const isolatedEnv = {
@@ -29,14 +34,17 @@ async function main() {
   });
   try {
     const window = await app.firstWindow({ timeout: 15_000 });
-    await window.getByRole('heading', { name: '股市記者小幫手' }).waitFor({ state: 'visible', timeout: 10_000 });
+    await window.locator('.brand').filter({hasText:'股市記者小幫手'}).waitFor({state:'visible',timeout:10_000});
+    await window.getByRole('heading',{name:'總覽',exact:true}).waitFor({state:'visible'});
     const packageVersion = JSON.parse(await readFile(path.resolve(process.cwd(), 'package.json'), 'utf8')).version;
     await window.getByText(`v2 · 版本 ${packageVersion}`, { exact: true }).waitFor({ state: 'visible' });
     await window.getByRole('tab', { name: '設定' }).click();
-    await window.getByRole('heading', { name: '監控排程' }).waitFor({ state: 'visible' });
+    await window.getByRole('heading', { name: '設定',exact:true }).waitFor({ state: 'visible' });
     await window.getByRole('combobox', { name: '重大訊息檢查頻率' }).waitFor({ state: 'visible' });
-    await window.getByRole('checkbox', { name: '收到本日無違約揭露通知' }).waitFor({ state: 'visible' });
-    await window.getByRole('button', { name: '匯出資料' }).waitFor({ state: 'visible' });
+    await window.getByRole('checkbox', { name: '本日無違約揭露時也通知' }).waitFor({ state: 'visible' });
+    await window.getByRole('tab',{name:'資料管理',exact:true}).click();
+    await window.getByRole('button',{name:'匯出本機資料'}).waitFor({state:'visible'});
+    await window.getByRole('tab',{name:'通知',exact:true}).click();
     await window.getByRole('button', { name: '發送測試通知', exact: true }).click();
     await window.getByText('隔離測試模式不顯示 Windows 通知。').waitFor({ state: 'visible' });
 

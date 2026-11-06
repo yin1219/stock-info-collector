@@ -4,7 +4,25 @@
 
 本倉庫同時保留既有的 v1 命令列流程與 v2 桌面程式。v2 已能建置安裝包，正式 Google Calendar 已驗證既有活動去重與刪除後補建。交接時須核對所有舊版 Windows 工作皆停用，不能只看 `stock-info-collector-daily-work`；另有 `stock-info-collector` 舊工作也須核對。目前兩項皆停用，v2 是唯一啟用的已知每日工作，固定 19:00。驗收已用隔離的近時**每日** Windows 工作證明自然觸發與封裝入口，並以正式 Google 查重／補建和無視窗執行紀錄驗證業務流程；尚未觀測正式 19:00 當日自然執行，不可將分層測試說成該次結果。官方來源完整性仍有限制。功能邊界與待辦以 [OpenSpec tasks](openspec/changes/build-stock-reporter-assistant-v2/tasks.md)、[Scenario 對照表](docs/scenario-traceability.md) 和 [Windows 驗收紀錄](docs/windows-manual-acceptance.md) 為準。
 
+## 新版介面
+
+目前準備發佈的 Windows 測試版本為 **1.0.24**，包含七頁新版介面、每日指數更新、歷史補匯、新手導覽與首次設定清單。外資 TWSE CSV 與 CMoney 分類仍待真實多日核對，介面會顯示限制並阻止未確認的混接排名。
+
+正式 Electron 已套用七頁新版介面：白底、精簡側欄、公告整列展開、對話框管理公司，以及設定四分頁。沿用原有 SQLite、來源、Google 與排程規則，畫面顯示真實資料及狀態；完整版本位於側欄底部。
+
+不需重新安裝即可試用正式前端：雙擊 `scripts/launch-dev-preview.cmd`，使用隔離暫存資料，不操作正式帳號或排程。`npm run demo` 則保留純示意的瀏覽器原型（`http://127.0.0.1:5178`）。兩者用途及測試方式見 [正式介面與維護說明](docs/reporter-ui-integration.md)；設計原型見 [預覽文件](docs/ui-demo.md)。安裝版須重新 build／make 才會包含修改。
+
+## 新手導覽與功能說明
+
+首次開啟會出現歡迎卡，按「開始設定」核對關注公司、檢查排程及登入／系統匣選項。Google Calendar、Windows 通知測試及 CMoney 歷史資料列為依需求設定，清單顯示真實狀態，可隨時重新檢查或從側欄「使用指南」重開。按「開始導覽」可走完五步快速導覽，認識關注公司、重大訊息、來源狀態、Google Calendar與背景設定。選「稍後」即可關閉，日後從側欄「使用指南」重看。完成或略過狀態保存在目前使用者的本機資料，與產品版本分開，更新程式會沿用。
+
+七頁標題旁都有「使用說明」，提供該頁的用途、資料限制與操作說明。按「帶我操作」會啟動三步高亮導覽。可用上一步／下一步、Tab及Enter操作，Esc或右上角結束按鈕退出，焦點回到該頁說明入口。來源狀態、CMoney歷史補匯、通知篩選及Calendar查重等說明均可隨時查閱。
+
+導覽只切換頁面與顯示說明。需要更新來源、Google授權、同步Calendar、匯入、刪除或儲存設定時，由使用者自行操作。偏好儲存失敗會顯示訊息，提醒下次可能再次看到歡迎卡。技術與Scenario驗證見 [導覽驗證紀錄](docs/onboarding-traceability.md)。
+
 ## 使用 v2
+
+發佈給使用者時，交付單一 `StockReporterAssistantSetup.exe` 即可，完整安裝內容已包含其中。第三方授權聲明隨程式附於 `assets/third-party-notices.txt`。
 
 1. 由發佈者提供的 `StockReporterAssistantSetup.exe` 覆蓋升級。新版安裝檔若偵測到已安裝 v2 仍在執行（按視窗 X 只會縮到系統匣），會先詢問是否結束舊版；選「否」不安裝，選「是」才關閉已驗證的本產品程序並繼續。安裝版已實際驗證兩條路徑：選「否」後舊版繼續運作；選「是」後關閉舊版並完成 1.0.22 升級。安裝後從桌面或開始功能表開啟，核對側欄完整版本號；若仍看到舊版，確認舊程序已退出及捷徑位置。安裝檔位於本機建置的 `artifacts/forge-out/make/squirrel.windows/x64/`；GitHub 原始碼不含 Google OAuth client，因此自行建置前須先看下方「製作安裝包」。
 2. 在「關注公司」新增上市／上櫃公司，或預覽並匯入 v1 `config/default.json` 的股號清單。停用會保留關注項目供日後啟用；移除只取消關注，不刪除歷史公告。
@@ -15,14 +33,14 @@
 
 關閉主視窗後，正式模式會留在系統匣繼續排程；需從系統匣選「結束」才真正退出。全新正式安裝預設勾選「登入 Windows 時啟動」與「啟動後縮到系統匣」，既有使用者選擇在升級時保留；兩項皆可在設定頁調整並讀回實際生效狀態。完整畫面操作、來源狀態及備份說明見 [v2 使用指南](docs/user-guide-v2.md)。
 
-畫面左側標題下會顯示目前正在執行的完整應用程式版本（例如 `v2 · 版本 1.0.13`），可用來核對安裝或覆蓋升級是否真的啟動新版；這不是 Electron runtime 版本。
+畫面左側欄底部會顯示目前正在執行的完整應用程式版本（例如 `v2 · 版本 1.0.13`），可用來核對安裝或覆蓋升級是否真的啟動新版；這不是 Electron runtime 版本。
 
 ## 技術與資料流程
 
 | 區塊 | 技術 | 職責 |
 | --- | --- | --- |
 | 桌面與封裝 | Electron Forge、Vite、TypeScript、Squirrel.Windows、IExpress | Windows 視窗、系統匣、啟動生命週期、單一安裝檔與升級前提醒 |
-| 畫面 | React、CSS | 六個頁面、狀態與錯誤呈現；不直接讀取檔案或 token |
+| 畫面 | React、CSS | 七個頁面、狀態與錯誤呈現；不直接讀取檔案或 token |
 | 主程序 | Electron main、preload 白名單 IPC | 排程、通知、OAuth、Calendar、資料匯出與權限邊界 |
 | 業務與來源 | TypeScript services／providers、Axios、Cheerio | MOPS 法說會與公告、TWSE／TPEX 資料正規化、去重及降級判定 |
 | 本機資料 | SQLite (`better-sqlite3`) | 關注清單、公告、法說會、工作狀態、通知 outbox 與稽核 |
@@ -126,3 +144,18 @@ v2 會核對兩個已知 v1 工作名稱（`stock-info-collector-daily-work`、`
 停用後保留供回退的 v1 工作仍可在設定頁核對並確認回寫 `StockNumbers`；v2 寫入前會備份原 JSON，其他欄位保留。解除安裝只移除可證明由 v2 建立的工作。若需回退，先停用並確認 v2 已停止，再核對舊工作後才重新啟用 v1，絕不可同時啟用兩個工作。實際切換與執行證據見 [Windows 驗收紀錄](docs/windows-manual-acceptance.md)。
 
 `node index.js`／`npm run v1:start` **不是 smoke test**：會連 MOPS、可能觸發 OAuth 並新增正式 Calendar 活動。現有 `npm run build` 是 v2 Forge package，**不**重建 v1 `pkg` 執行檔；`npm run deploy` 是不可用的舊部署命令。若要讓 v2 取代 v1，先完成 [OpenSpec tasks](openspec/changes/build-stock-reporter-assistant-v2/tasks.md) 所要求的實際資料、Calendar 與 Windows 驗收，再依有記錄的 rollback 步驟切換。
+# 盤面紀錄
+
+開啟左側「盤面紀錄」可查看2020年以來三大法人連買／連賣累計金額前三名、加權指數盤中漲跌點。可展開「匯入 CMoney Excel」，依指數、外資、投信、自營商類型匯入CMoney預設表格的匯出檔，保留欄位及單位。檔名與年份不限，不必每次提供四種類型；首次建立歷史基準後，可只補匯新日期或修訂資料。原始Excel保留本機，不放入Git或安裝包。
+
+金額以元保存，畫面轉成億元；指數使用當日高／低與前一交易日收盤比較，並非收盤漲跌。至少連續兩個交易日才計法人紀錄，已知缺日會中斷。新聞比對只供內部研究，不顯示於使用者畫面，也不排程爬取。2020年以來的日資料不能證明2020年前沒有更大的紀錄。
+
+加權指數每日更新使用 TWSE OpenAPI 的 `indicesReport/MI_5MINS_HIST`。小幫手在背景運作時，於台北時間15:30後每小時檢查，啟動及睡眠恢復也走相同檢查流程。「更新官方指數」可手動檢查。官方API提供最新月份資料，SQLite以日期合併並保留先前月份。
+
+加權指數頁會顯示官方資料日、最近檢查時間及已知缺日。可按「匯入 CMoney 補齊」，或從「資料管理」選擇「匯入加權指數 Excel」，使用預設匯出格式補匯所需日期。官方同日列優先，歷史修訂保存稽核，補齊後即重算排名。缺日依其他已保存日期交叉核對，所有來源皆缺的日期仍須人工核對。頁面可見時每分鐘讀取本機最新資料，回到視窗也會刷新。
+
+背景程式在台北時間15:30後每小時檢查一次官方指數，啟動與喚醒也會檢查；真正收到當日官方列才顯示確認。FinMind免費授權及多日數值尚未通過驗證，法人採手動後備：交易日盤後通知一次，從頁面連結至TWSE下載日報CSV，再按「匯入 TWSE 當日 CSV」。官方指數延遲時改用官方開休市表確認交易日；兩者皆不可用時顯示來源失敗，不猜測零筆。
+
+**外資來源核對：**首次混合匯入CMoney與TWSE會顯示警示。請在TWSE日報選取至少三個CMoney已涵蓋的日期，逐份下載CSV後匯入；必須保留「外資自營商」列。系統以CMoney兩位百萬元精度核對「含／不含外資自營商」兩種口徑，只有三日以上一致且可唯一區分時才自動銜接；差異太小、缺欄或衝突會維持警示。核對前外資歷史排名維持CMoney來源，不混接CSV；投信及自營商依相同分類更新。重匯Excel不能覆寫官方同日列。歷史資料若所有來源同時缺日，僅靠匯入檔案無法證明完整，引用前請核對來源。
+
+開發驗證可執行 `npm run test:unit`、`npm run test:integration`、`npm run test:ui`、`npm run test:e2e`；`node scripts/audit-market-records.cjs data 2026-11-05` 是唯讀本機Excel重算，僅輸出前三名摘要與新聞連結，不連網。詳細查核與追蹤見 [來源查核](docs/market-records-news-audit.md)及[Scenario matrix](docs/market-records-traceability.md)。

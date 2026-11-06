@@ -8,6 +8,7 @@ export type ReporterRoute =
   | { type: 'event-detail'; eventId: string }
   | { type: 'event-list'; eventIds: string[] }
   | { type: 'source-status' }
+  | { type: 'market-records' }
   | { type: 'disclosure-list' }
   | { type: 'test-notification' };
 
@@ -35,10 +36,14 @@ function isReporterRoute(value: unknown): value is ReporterRoute {
   if (route.type === 'event-detail') return typeof route.eventId === 'string' && route.eventId.length > 0;
   if (route.type === 'event-list') return Array.isArray(route.eventIds) && route.eventIds.every((id) => typeof id === 'string' && id.length > 0);
   if (route.type === 'source-status') return true;
+  if (route.type === 'market-records') return true;
   return route.type === 'disclosure-list' || route.type === 'test-notification';
 }
 
 export interface ReporterApi {
+  getMarketRecords(): Promise<unknown>;
+  refreshMarketRecords(): Promise<unknown>;
+  importMarketRecords(kind: 'foreign' | 'trust' | 'dealer' | 'index' | 'csv'): Promise<unknown>;
   getVersion(): Promise<string>;
   listWatchlist(filter?: { query?: string; activeOnly?: boolean }): Promise<unknown>;
   addWatchlist(input: { market: 'TWSE' | 'TPEX'; stockCode: string; category?: string; notes?: string }): Promise<unknown>;
@@ -80,6 +85,9 @@ export interface ReporterApi {
 
 export function createReporterApi(ipc: IpcInvoker): ReporterApi {
   const api: ReporterApi = {
+    getMarketRecords: () => ipc.invoke('market-records:get'),
+    refreshMarketRecords: () => ipc.invoke('market-records:refresh'),
+    importMarketRecords: (kind) => ipc.invoke('market-records:import', kind),
     getVersion: () => ipc.invoke('desktop:get-app-version') as Promise<string>,
     listWatchlist: (filter = {}) => ipc.invoke('watchlist:list', filter),
     addWatchlist: (input) => ipc.invoke('watchlist:add', input),

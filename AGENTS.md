@@ -1,5 +1,9 @@
 # AGENTS.md
 
+## 盤面紀錄變更
+
+`openspec/changes/add-market-records` 是獨立功能；日資料、來源與修訂使用SQLite v6。CMoney原檔位於忽略版控的data，不提交或封裝。測試使用合成OOXML與CSV。FinMind未通過免費授權及多日資料核對前不得自動啟用；TWSE CSV為使用者自行下載再匯入。CMoney與TWSE外資分類尚未核對，禁止混接排名；來源限制與證據見docs/market-records-news-audit.md。正式Calendar無視窗入口不得啟動市場更新；隔離userData不自動連來源或發Toast。新Scenario矩陣為docs/market-records-traceability.md，不合併進已完成的v2矩陣。
+
 ## 專案定位
 
 這是供專案作者與其配偶（一名財經記者）使用的個人 side project。核心目標是減少財經記者逐家公司查詢資訊、整理時間並手動登錄行事曆的重複工作。
@@ -174,3 +178,18 @@ npm run test:windows-task-smoke
 v2 自動化測試、SQLite/provider integration、React UI、Electron E2E、traceability 與 coverage gate 已建立；這些 v1 技術債不可當成 v2 現況。使用者本人已在隔離開發版及本機安裝版完成 Google OAuth 連線、正式查重與單筆補建。登入啟動開／關、sleep/resume 及 1.0.20 六頁產品 UI 已由作者實際操作確認；Tray 完整流程、重大訊息 live 來源完整性與法說會每日自然執行仍待驗收，依 `openspec/changes/build-stock-reporter-assistant-v2/tasks.md` 和 `docs/scenario-traceability.md` 為準；乾淨 profile 安裝不屬驗收範圍。不得把目前 profile 的 installer smoke 擴大描述為已完成全部正式環境驗收。
 
 處理技術債時不要順手大改。先以可觀察的失敗案例或明確使用需求界定範圍，再做可驗證的最小修正。
+
+
+## 新版介面預覽邊界
+
+`src/demo` 與 `vite.demo.config.mts` 是已接受設計的獨立七頁瀏覽器原型，`npm run demo` 開啟，`npm run test:demo` 使用獨立Playwright Chrome。不得接正式IPC、userData、OAuth、Calendar或Windows排程。正式renderer已接回既有ReporterApi，與demo共用純視覺 `src/renderer/ui.tsx`／`reporter.css`，不得引用demo種子。正式Electron測試保留；未重新發佈前不得宣稱既有installer已換新介面。新聞比對只供內部研究，不呈現使用者畫面、不定期爬新聞；2020年以來資料不能證明此前沒有更大紀錄。設計對照及Scenario見 `docs/ui-demo.md`。
+
+正式新版介面：七頁與設定四分頁的使用、元件邊界及視覺證據見 `docs/reporter-ui-integration.md`，Scenario 見 `docs/reporter-ui-traceability.md`。React／Electron測試保留原有業務斷言，只有新對話框／分頁定位更新；Electron使用暫存SQLite並驗重啟、匯入具體數值及通知channel。單純換版面不要求重做正式Google、Windows排程或installer人工驗收。盤面`latestFlows`只讀已確認且口徑一致日資料，不能由前三名反推最新連續期間。
+
+每日加權指數使用TWSE OpenAPI `indicesReport/MI_5MINS_HIST`，保留CMoney歷史補匯與官方同日優先。`indexUpdate`描述正式／隔離自動模式、官方資料日、當次程序最近檢查及已知缺日。缺日僅來自保存日期的交叉核對，所有來源皆缺日仍須人工核對。主程序的`automaticMarketUpdates`同時控制service及lifecycle，隔離資料與Calendar無視窗入口停用自動更新。盤面可見頁每分鐘及focus讀SQLite，不另抓官方來源，手動更新期間的舊回應須以請求序號隔離。驗證見 `test/integration/market-records-daily.test.ts` 與 `test/e2e/market-records-daily.spec.ts`。
+
+## 新手導覽
+
+`add-guided-onboarding` 使用本機打包MIT Driver.js，GuideProvider集中管理快速／頁面導覽，`onboarding.ts`存放七頁說明。PageHeader透過可選GuideContext顯示使用說明，demo與獨立元件可不掛Provider。localStorage `reporter.guided-onboarding.v1`只存導覽schema與complete／skipped，不隨產品版號重置。導覽不得呼叫業務寫入API，僅切頁與讀取既有頁面資料。新驗證矩陣為 `docs/onboarding-traceability.md`，隔離Electron驗重啟保存、七頁導覽、鍵盤與390px。
+
+首次設定清單 `SetupChecklist` 只讀既有五項IPC，狀態由當前設定衍生，不另存完成勾選。Windows阻擋與讀取失敗須明確呈現；通知需人工測試，資料日期範圍不表示歷史完整。入口可指定設定分頁，不自動授權、改設定、匯入或發通知。測試見 `SetupChecklist.test.tsx` 與 `first-use-setup.spec.ts`。

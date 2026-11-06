@@ -180,6 +180,14 @@ const initialMigrations: readonly Migration[] = [
       `);
     },
   },
+  { version: 6, name: 'market records daily data and audit', up(database) {
+    database.exec(`
+      CREATE TABLE market_days(date TEXT NOT NULL, kind TEXT NOT NULL, data TEXT NOT NULL, imported_at TEXT NOT NULL, PRIMARY KEY(date,kind));
+      CREATE TABLE market_revisions(id INTEGER PRIMARY KEY, date TEXT NOT NULL, kind TEXT NOT NULL, previous_data TEXT NOT NULL, replacement_data TEXT NOT NULL, imported_at TEXT NOT NULL);
+      CREATE TABLE market_notices(key TEXT PRIMARY KEY NOT NULL);
+      CREATE TABLE market_foreign_comparisons(date TEXT PRIMARY KEY NOT NULL, cmoney_net INTEGER NOT NULL, twse_net INTEGER NOT NULL, dealer_net INTEGER NOT NULL);
+    `);
+  } },
 ];
 
 export function openDatabase(filename: string, options: OpenDatabaseOptions = {}): SQLiteDatabase {
